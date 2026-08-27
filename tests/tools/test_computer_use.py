@@ -1928,6 +1928,49 @@ class TestZIndexSorting:
         desktop = next(w for w in out if w["app_name"] == "Desktop")
         assert desktop["z_index"] == 0
 
+    def test_windows_default_capture_skips_system_and_automation_overlays(self):
+        """Live Windows repro: helper HWNDs outrank the real foreground app."""
+        from tools.computer_use.cua_backend import (
+            _ingest_windows,
+            _select_capture_target,
+        )
+
+        windows = _ingest_windows([
+            {"app_name": "codex-computer-use.exe", "pid": 1,
+             "window_id": 11, "is_on_screen": True,
+             "title": "Codex Computer Use Cursor Overlay", "z_index": 16},
+            {"app_name": "ClickToDo.exe", "pid": 2, "window_id": 22,
+             "is_on_screen": True, "title": "Click to Do", "z_index": 14},
+            {"app_name": "cua-driver.exe", "pid": 3, "window_id": 33,
+             "is_on_screen": True,
+             "title": "Cua.AgentCursorOverlay.default", "z_index": 12},
+            {"app_name": "Notepad.exe", "pid": 4, "window_id": 44,
+             "is_on_screen": True, "title": "Untitled - Notepad",
+             "z_index": 10},
+        ])
+
+        with patch("tools.computer_use.cua_backend.sys.platform", "win32"):
+            target = _select_capture_target(windows, app_requested=False)
+
+        assert target["app_name"] == "Notepad.exe"
+        assert target["window_id"] == 44
+
+    def test_windows_explicit_overlay_target_is_preserved(self):
+        from tools.computer_use.cua_backend import (
+            _ingest_windows,
+            _select_capture_target,
+        )
+
+        overlay = _ingest_windows([{
+            "app_name": "ClickToDo.exe", "pid": 2, "window_id": 22,
+            "is_on_screen": True, "title": "Click to Do", "z_index": 14,
+        }])
+
+        with patch("tools.computer_use.cua_backend.sys.platform", "win32"):
+            target = _select_capture_target(overlay, app_requested=True)
+
+        assert target["window_id"] == 22
+
 class TestImageMimeTypePropagation:
     """Surface 7 (NousResearch/hermes-agent#47072): trycua/cua#1961 made
     `mimeType` part of every MCP image-part response, so the wrapper no

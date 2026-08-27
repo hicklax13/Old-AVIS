@@ -2172,9 +2172,10 @@ class TestElementTokenAttachment:
     1. capture() refreshes a per-snapshot {index -> token} map from
        structuredContent.elements.
     2. Whenever an action carrying element_index is about to hit cua-driver,
-       look up the matching token and attach it — but ONLY for tools that
-       advertise `accessibility.element_tokens` (Surface 4 gate). Older
-       drivers reject unknown args via additionalProperties=false.
+       look up the matching token and attach it when the tool advertises
+       `accessibility.element_tokens` OR its live schema accepts
+       `element_token`. Older drivers reject unknown args via
+       additionalProperties=false, so a schema without the field fails closed.
     3. cua-driver prefers token over index when both are supplied, so
        sending both is safe and stale-detection becomes explicit.
     """
@@ -2196,6 +2197,7 @@ class TestElementTokenAttachment:
                 return cap in capabilities.get(tool, set())
             return any(cap in caps for caps in capabilities.values())
         backend._session.supports_capability = _supports
+        backend._session.supports_input_property.return_value = False
         backend._active_pid = 111
         backend._active_window_id = 222
         return backend
@@ -2211,6 +2213,28 @@ class TestElementTokenAttachment:
         assert args["element_index"] == 5
         # The matching token rode along — cua-driver will prefer it.
         assert args["element_token"] == "s0001:5"
+
+    def test_token_attached_when_live_schema_accepts_it_without_capability(self):
+        """cua-driver 0.22.1 exposes the field but no capability token."""
+        backend = self._backend_with_session({"click": set()})
+        backend._session.supports_input_property.return_value = True
+        backend._snapshot_tokens = {5: "s0001:5"}
+
+        backend.click(element=5, button="left")
+
+        name, args = backend._session.call_tool.call_args.args
+        assert name == "click"
+        assert args["element_index"] == 5
+        assert args["element_token"] == "s0001:5"
+
+    def test_token_omitted_when_capability_and_schema_both_lack_field(self):
+        backend = self._backend_with_session({"click": set()})
+        backend._snapshot_tokens = {5: "s0001:5"}
+
+        backend.click(element=5, button="left")
+
+        _, args = backend._session.call_tool.call_args.args
+        assert "element_token" not in args
 
 
     def test_capture_refreshes_snapshot_tokens(self):

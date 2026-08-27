@@ -4079,9 +4079,12 @@ class CuaDriverBackend(ComputerUseBackend):
            supplied. Returns an explicit 'stale' error if the snapshot
            has been superseded."
 
-        Gated on the per-tool capability claim so we don't send the
-        field to drivers that predate the surface (which would reject
-        the schema with `additionalProperties: false`).
+        Gated on either the per-tool capability claim or the live tool
+        schema. cua-driver 0.22.1 accepts and requires ``element_token``
+        for snapshot-scoped element actions, but advertises an empty
+        optional-capabilities list. The schema is the authoritative
+        compatibility boundary for that driver shape; older drivers that
+        predate the field still fail closed because their schema omits it.
         """
         idx = args.get("element_index")
         if not isinstance(idx, int):
@@ -4089,8 +4092,11 @@ class CuaDriverBackend(ComputerUseBackend):
         token = self._snapshot_tokens.get(idx)
         if not token:
             return
-        if not self._session.supports_capability(
-            "accessibility.element_tokens", tool=tool
+        if not (
+            self._session.supports_capability(
+                "accessibility.element_tokens", tool=tool
+            )
+            or self._session.supports_input_property(tool, "element_token")
         ):
             return
         args["element_token"] = token

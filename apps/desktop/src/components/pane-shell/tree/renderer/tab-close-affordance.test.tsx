@@ -80,7 +80,7 @@ function renderOneStrip() {
   render(<TreeGroup node={zone} parentAxis="row" />)
 }
 
-const tabEl = (paneId: string) => document.querySelector<HTMLElement>(`[data-tree-tab="${paneId}"]`)
+const tabEl = (paneId: string) => globalThis.document.querySelector<HTMLElement>(`[data-tree-tab="${paneId}"]`)
 
 /** Does this tab advertise a ✕? */
 const hasCloseButton = (paneId: string) => Boolean(tabEl(paneId)?.querySelector('button[aria-label]'))

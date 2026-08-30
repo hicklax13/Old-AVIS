@@ -20,7 +20,7 @@
  * Prerequisite: `npm run build` must have been run so dist/ exists.
  */
 
-import { expect, type Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 
 import { type MockBackendFixture, setupMockBackend, waitForAppReady } from './fixtures'
 
@@ -31,21 +31,37 @@ const STRIP = '.glyph-spinner__strip'
  * GlyphSpinner while the agent is working. Resolves once a frame strip is in
  * the DOM.
  */
-async function mountSpinner(page: Page): Promise<void> {
+async function mountSpinner(page: Page): Promise<Locator> {
+  await page.bringToFront()
+  await page.evaluate(() => {
+    document.documentElement.removeAttribute('data-renderer-animations-paused')
+  })
+
   const composer = page.locator('[contenteditable="true"]').first()
   await composer.waitFor({ state: 'visible', timeout: 10_000 })
   await composer.click()
   await composer.type('hello from the glyph spinner spec', { delay: 10 })
   await page.keyboard.press('Enter')
 
-  await page.waitForSelector(STRIP, { state: 'attached', timeout: 20_000 })
+  const strip = page.locator(STRIP).last()
+  await strip.waitFor({ state: 'attached', timeout: 20_000 })
+  // The shared mock app may retain the status row in an inactive kept-alive
+  // pane between tests. Activate this exact specimen so the CSS contract is
+  // measured from a known running state; the next test explicitly parks it.
+  await strip.evaluate(el => el.closest('.glyph-spinner')?.removeAttribute('data-paused'))
+
+  return strip
 }
 
 test.describe('GlyphSpinner (compositor animation)', () => {
   let fixture: MockBackendFixture
 
+  // The global E2E default uses reduced motion to stabilize ordinary UI
+  // screenshots. This spec's subject is the animation itself, so it must run
+  // with the browser animation engine enabled.
   test.beforeAll(async () => {
     fixture = await setupMockBackend()
+    await fixture.page.emulateMedia({ reducedMotion: 'no-preference' })
     await waitForAppReady(fixture)
   })
 
@@ -55,15 +71,9 @@ test.describe('GlyphSpinner (compositor animation)', () => {
 
   test('animates with a steps() transform keyframes animation, one step per frame', async () => {
     const { page } = fixture
-    await mountSpinner(page)
+    const strip = await mountSpinner(page)
 
-    const observed = await page.evaluate(strip => {
-      const el = document.querySelector<HTMLElement>(strip)
-
-      if (!el) {
-        throw new Error('no frame strip in the DOM')
-      }
-
+    const observed = await strip.evaluate(el => {
       const style = getComputedStyle(el)
       const animations = el.getAnimations()
 
@@ -81,7 +91,7 @@ test.describe('GlyphSpinner (compositor animation)', () => {
           .map(k => String((k as Keyframe & { transform?: string }).transform ?? ''))
           .join(' | ')
       }
-    }, STRIP)
+    })
 
     // The strip carries every frame; `steps(N)` parks on each one in turn.
     expect(observed.frameCount).toBeGreaterThan(1)
@@ -94,32 +104,33 @@ test.describe('GlyphSpinner (compositor animation)', () => {
     expect(observed.durationMs).toBeGreaterThan(0)
     // Length-typed travel, never a percentage: `translateY(-100%)` would keep
     // the animation off the compositor.
-    expect(observed.travel).toContain('calc(')
+    // Chromium may serialize the resolved calc() expression as pixels. Both
+    // forms are length-typed; a percentage is the layout-dependent regression.
+    expect(observed.travel).toContain('translateY(')
     expect(observed.travel).not.toContain('%')
   })
 
   test('is promoted to a layer while running, and neither animates nor holds a layer when parked', async () => {
     const { page } = fixture
-    await mountSpinner(page)
+    const strip = await mountSpinner(page)
 
-    const running = await page.evaluate(strip => {
-      const el = document.querySelector<HTMLElement>(strip)!
-
+    const running = await strip.evaluate(el => {
       return {
         playState: getComputedStyle(el).animationPlayState,
-        willChange: getComputedStyle(el).willChange
+        willChange: getComputedStyle(el).willChange,
+        rootPaused: document.documentElement.hasAttribute('data-renderer-animations-paused'),
+        spinnerPaused: el.closest('.glyph-spinner')?.getAttribute('data-paused') ?? null,
       }
-    }, STRIP)
+    })
 
-    expect(running.playState).toBe('running')
+    expect(running).toMatchObject({ playState: 'running', rootPaused: false, spinnerPaused: null })
     // Scoped to active spinners — a permanently promoted layer per parked
     // spinner is pure memory at fan-out breadth.
     expect(running.willChange).toBe('transform')
 
     // 1. The per-spinner gate: a kept-alive but inactive pane, or an explicit
     //    `paused` prop (ChatSwapOverlay's fade-out).
-    const parked = await page.evaluate(strip => {
-      const el = document.querySelector<HTMLElement>(strip)!
+    const parked = await strip.evaluate(el => {
       const viewport = el.closest<HTMLElement>('.glyph-spinner')!
       const previous = viewport.getAttribute('data-paused')
 
@@ -137,7 +148,7 @@ test.describe('GlyphSpinner (compositor animation)', () => {
       }
 
       return state
-    }, STRIP)
+    })
 
     expect(parked.playState).toBe('paused')
     expect(parked.willChange).toBe('auto')
@@ -147,33 +158,32 @@ test.describe('GlyphSpinner (compositor animation)', () => {
     //    be named in that rule, or every spinner keeps animating behind an
     //    inactive window — the CPU burn the original ticker's pause
     //    controller existed to avoid.
-    const globallyPaused = await page.evaluate(strip => {
+    const globallyPaused = await strip.evaluate(el => {
       const root = document.documentElement
       const had = root.hasAttribute('data-renderer-animations-paused')
 
       root.setAttribute('data-renderer-animations-paused', '')
-      const playState = getComputedStyle(document.querySelector<HTMLElement>(strip)!).animationPlayState
+      const playState = getComputedStyle(el).animationPlayState
 
       if (!had) {
         root.removeAttribute('data-renderer-animations-paused')
       }
 
       return playState
-    }, STRIP)
+    })
 
     expect(globallyPaused).toBe('paused')
   })
 
   test('advances in discrete frames and creates no timer-driven DOM churn', async () => {
     const { page } = fixture
-    await mountSpinner(page)
+    const strip = await mountSpinner(page)
 
     // Sample the resolved transform across one full cycle. A steps() animation
     // holds each value for a whole interval and jumps between them, so the
     // distinct values it visits must be bounded by the frame count — a linear
     // animation would produce a new value on every sample.
-    const sampled = await page.evaluate(async strip => {
-      const el = document.querySelector<HTMLElement>(strip)!
+    const sampled = await strip.evaluate(async el => {
       const frames = el.querySelectorAll('.glyph-spinner__frame').length
       const duration = Number(el.getAnimations()[0]?.effect?.getTiming().duration ?? 0)
       const seen = new Set<string>()
@@ -187,7 +197,7 @@ test.describe('GlyphSpinner (compositor animation)', () => {
       }
 
       return { distinct: seen.size, frames, textUnchanged: el.textContent === textAtStart }
-    }, STRIP)
+    })
 
     expect(sampled.distinct).toBeGreaterThan(1)
     expect(sampled.distinct).toBeLessThanOrEqual(sampled.frames + 1)

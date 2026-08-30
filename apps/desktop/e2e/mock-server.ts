@@ -26,6 +26,9 @@ export const MOCK_REPLY = 'Hello from the mock inference server! The full boot c
 export interface MockServerOptions {
   /** Pause the matching stream after its first token for session-switch E2E coverage. */
   holdFirstStreamForPrompt?: string
+  /** Optional unique reply for the held stream so resume tests never count
+   * identical historical mock replies. */
+  heldStreamReply?: string
 /** Pause the first completion whose request JSON contains this text. */
 holdFirstCompletionContaining?: string
 /** Absolute sandbox path written by the verify-on-stop scripted tool call. */
@@ -480,18 +483,23 @@ export function startMockServer(options: MockServerOptions = {}): Promise<MockSe
           const messages: any[] = Array.isArray(parsed.messages) ? parsed.messages : []
           const lastUserMsg = [...messages].reverse().find(m => m?.role === 'user')
           const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
+          // Session-title generation replays the user's trigger text through a
+          // separate completion without the agent tool schema. Never let that
+          // auxiliary request consume a scripted agent turn: it races the live
+          // stream and used to skip arbitrary interims/tool calls in E2E.
+          const isAgentCompletion = Array.isArray(parsed.tools) && parsed.tools.length > 0
           if (userText) {
             _receivedUserTexts.push(userText)
           }
-          const isInterimTrigger = userText.includes('E2E_INTERIM_TRIGGER')
-          const isSidebarTrigger = userText.includes('E2E_SIDEBAR_TRIGGER')
-          const isSidebarCrossTrigger = userText.includes('E2E_SIDEBAR_CROSS')
-          const isQueueStopTrigger = userText.includes('E2E_QUEUE_STOP_TRIGGER')
-          const isTaskPanelResumeTrigger = userText.includes(TASK_PANEL_RESUME_TRIGGER)
-          const isVerificationStopTrigger = messages.some(
+          const isInterimTrigger = isAgentCompletion && userText.includes('E2E_INTERIM_TRIGGER')
+          const isSidebarTrigger = isAgentCompletion && userText.includes('E2E_SIDEBAR_TRIGGER')
+          const isSidebarCrossTrigger = isAgentCompletion && userText.includes('E2E_SIDEBAR_CROSS')
+          const isQueueStopTrigger = isAgentCompletion && userText.includes('E2E_QUEUE_STOP_TRIGGER')
+          const isTaskPanelResumeTrigger = isAgentCompletion && userText.includes(TASK_PANEL_RESUME_TRIGGER)
+          const isVerificationStopTrigger = isAgentCompletion && messages.some(
             message => typeof message?.content === 'string' && message.content.includes(VERIFICATION_STOP_TRIGGER),
           )
-          const isCorrectionSwitchTrigger = messages.some(
+          const isCorrectionSwitchTrigger = isAgentCompletion && messages.some(
             message => typeof message?.content === 'string' && message.content.includes(CORRECTION_SWITCH_TRIGGER),
           )
 
@@ -620,7 +628,8 @@ export function startMockServer(options: MockServerOptions = {}): Promise<MockSe
               options.holdFirstStreamForPrompt && typeof lastUserMessage?.content === 'string' &&
                 lastUserMessage.content.includes(options.holdFirstStreamForPrompt),
             )
-            streamTextResponse(res, model, MOCK_REPLY, holdThisStream || holdThisCompletion ? () => {
+            const responseText = holdThisStream && options.heldStreamReply ? options.heldStreamReply : MOCK_REPLY
+            streamTextResponse(res, model, responseText, holdThisStream || holdThisCompletion ? () => {
               if (holdThisCompletion) {
                 heldCompletionCount++
               }

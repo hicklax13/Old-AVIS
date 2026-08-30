@@ -29,6 +29,18 @@ async function waitForTranscript(page: Page, text: string, timeout = 90_000): Pr
   )
 }
 
+async function transcriptMessageCount(page: Page, text: string): Promise<number> {
+  return page.evaluate(expected => {
+    const viewport = document.querySelector('[data-slot="aui_thread-viewport"]')
+
+    return viewport
+      ? Array.from(viewport.querySelectorAll('[data-role="assistant"], [data-role="message"]')).filter(message =>
+          (message.textContent ?? '').includes(expected),
+        ).length
+      : 0
+  }, text)
+}
+
 test.describe('session compression', () => {
   test.describe.configure({ mode: 'serial' })
 
@@ -51,11 +63,13 @@ test.describe('session compression', () => {
     // Three completed exchanges leave a compressible middle after the
     // compressor's protected head/tail boundaries.
     await send(page, 'E2E_COMPRESSION_FIRST')
-    await waitForTranscript(page, reply)
+    await expect.poll(() => transcriptMessageCount(page, reply), { timeout: 30_000 }).toBeGreaterThanOrEqual(1)
     await send(page, 'E2E_COMPRESSION_SECOND')
     await expect.poll(() => receivedUserTexts().filter(text => text === 'E2E_COMPRESSION_SECOND').length).toBe(1)
+    await expect.poll(() => transcriptMessageCount(page, reply), { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
     await send(page, 'E2E_COMPRESSION_THIRD')
     await expect.poll(() => receivedUserTexts().filter(text => text === 'E2E_COMPRESSION_THIRD').length).toBe(1)
+    await expect.poll(() => transcriptMessageCount(page, reply), { timeout: 30_000 }).toBeGreaterThanOrEqual(3)
 
     // This test covers compression and continuation, not slash completion.
     // Insert the complete command atomically and click Send so an async
@@ -123,10 +137,14 @@ auxiliary:
     await fixture.mock.waitForHeldCompletion()
     await expect(page.getByRole('status', { name: 'Summarizing thread' }).last()).toBeVisible()
 
+    const composer = page.locator('[contenteditable="true"]').first()
+    await composer.click()
+    await composer.type(queued, { delay: 15 })
     const primary = page.locator('[data-slot="composer-root"] button[type="submit"]')
-    await expect(primary).toHaveAttribute('aria-label', 'Queue message')
+    await expect(primary).toHaveAttribute('aria-label', 'Send')
+    await expect(page.getByRole('button', { name: 'Queue message', exact: true })).toBeVisible()
 
-    await send(page, queued)
+    await page.keyboard.press('Enter')
     await expect(page.getByText('1 Queued')).toBeVisible()
     expect(fixture.mock.heldCompletionCount()).toBe(1)
     expect(receivedUserTexts()).not.toContain(queued)

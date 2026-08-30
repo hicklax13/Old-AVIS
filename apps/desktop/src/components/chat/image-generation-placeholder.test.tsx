@@ -11,8 +11,8 @@ let container: HTMLDivElement | null = null
 let windowState: WindowStateBridge
 
 function render() {
-  container = document.createElement('div')
-  document.body.append(container)
+  container = globalThis.document.createElement('div')
+  globalThis.document.body.append(container)
   root = createRoot(container)
 
   act(() => {
@@ -70,7 +70,7 @@ function installRaf() {
 describe('DiffusionCanvas scheduling', () => {
   beforeEach(() => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    vi.spyOn(globalThis.document, 'hasFocus').mockReturnValue(true)
     windowState = installWindowStateBridge()
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       setTransform: vi.fn()
@@ -153,7 +153,7 @@ function installDrawableContext() {
 describe('DiffusionCanvas frame budget', () => {
   beforeEach(() => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    vi.spyOn(globalThis.document, 'hasFocus').mockReturnValue(true)
     windowState = installWindowStateBridge()
   })
 
@@ -197,8 +197,8 @@ describe('DiffusionCanvas frame budget', () => {
 
     act(() => {
       for (let i = 0; i < 3; i++) {
-        const el = document.createElement('div')
-        document.body.append(el)
+        const el = globalThis.document.createElement('div')
+        globalThis.document.body.append(el)
         containers.push(el)
         const r = createRoot(el)
         roots.push(r)
@@ -221,8 +221,8 @@ describe('DiffusionCanvas frame budget', () => {
     }
 
     // Counter released on unmount — a fresh mount animates again.
-    const el = document.createElement('div')
-    document.body.append(el)
+    const el = globalThis.document.createElement('div')
+    globalThis.document.body.append(el)
     const r = createRoot(el)
 
     act(() => {

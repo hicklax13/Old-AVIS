@@ -4,6 +4,51 @@ Instructions for AI coding assistants and developers working on the hermes-agent
 
 **Never give up on the right solution.**
 
+## Connor's Desktop-only usage and deployment rule
+
+- Connor uses only the Hermes Desktop app on this laptop. Do not require him to
+  use the Hermes CLI or treat a CLI-only result as completion. An agent may use
+  CLI commands internally for setup, diagnostics, or backend administration,
+  but the finished capability and its verification must be available in the
+  correct Desktop app.
+- The authoritative app is the green-theme Hermes Desktop app pinned to the
+  Windows taskbar. Its canonical executable is
+  `C:\Dev\hermes-agent\apps\desktop\release\win-unpacked\Hermes.exe`, and its
+  normal profile is `C:\Users\conno\AppData\Roaming\Hermes`.
+- Playwright, development, staging, `release-codex*`, and other isolated app
+  instances are test surfaces only. Never mistake them for the installed app or
+  leave them open as the delivered result. Do not launch a visible test/dev
+  Electron window on Connor's active Windows desktop: Desktop E2E runs must
+  use a proven hidden or otherwise isolated execution path, and every run must
+  end with a process audit confirming that no test `electron.exe` remains.
+- Every current and future change that affects Connor's Hermes experience must
+  be packaged into the canonical Desktop executable, relaunched through the
+  pinned app, and verified against the normal profile. A source edit, passing
+  test, CLI configuration, or temporary Electron window alone is not done.
+- Before and after each Desktop deployment, verify that the pinned taskbar
+  shortcut and live root process resolve to the canonical executable. Preserve
+  a recoverable package backup before replacement. Record deployment evidence
+  and remaining work in `HERMES_READINESS_TODO.md`.
+
+## Connor's all-profile capability policy
+
+- Every MCP server, tool/toolset, plugin, static account key, and skill that is
+  installed for Connor must be enabled in every current local profile. This is
+  an explicit local policy; do not leave a capability available only in the
+  profile that happened to perform the installation.
+- After any capability or static account-key installation, run
+  `python scripts/sync_profile_capabilities.py --apply` from this checkout and
+  verify its read-back result. The command makes recoverable backups and aborts
+  on conflicting account keys instead of choosing a credential silently.
+- New profiles created in Desktop must clone `default`, which is the canonical
+  capability baseline. Keep the Desktop create-profile default pointed at
+  `default`; do not create a blank profile unless Connor explicitly requests an
+  isolated exception.
+- Do not copy refreshable OAuth stores (`mcp-tokens/`, `auth.json`,
+  `*_token.json`, or OAuth-pending files) between profiles. Enable the provider
+  everywhere, then authorize each profile independently. Copying a rotating
+  refresh token creates invalidation races and does not count as persistence.
+
 ## What Hermes Is
 
 Hermes is a personal AI agent that runs the same agent core across a CLI, a

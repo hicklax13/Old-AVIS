@@ -891,13 +891,25 @@ class AIAgent:
 
         if config_context_length is None:
             config_context_length = getattr(self, "_config_context_length", None)
-        return ensure_lmstudio_model_loaded(
+        load_result = ensure_lmstudio_model_loaded(
             self.model,
             self.base_url,
             getattr(self, "api_key", ""),
             config_context_length,
             return_load_result=True,
+            parallel=getattr(self, "lmstudio_parallel", None),
         )
+        if not AIAgent._lmstudio_load_was_unverified(load_result):
+            try:
+                from agent.lmstudio_idle import arm_agent_idle_unload
+
+                arm_agent_idle_unload(self)
+            except Exception:
+                logger.warning(
+                    "Could not arm LM Studio idle unloading",
+                    exc_info=True,
+                )
+        return load_result
 
     def switch_model(self, new_model, new_provider, api_key='', base_url='', api_mode=''):
         """Forwarder — see ``agent.agent_runtime_helpers.switch_model``."""
@@ -8679,6 +8691,7 @@ class AIAgent:
         task_started = False
         task_finished = False
         relay_outcome = "failed"
+        lmstudio_idle_token = None
 
         def _stop_durable_turn_lease_refresher() -> None:
             nonlocal durable_turn_lease_turn_active
@@ -8711,6 +8724,21 @@ class AIAgent:
                     _clear_if_owned()
 
         try:
+            try:
+                from agent.lmstudio_idle import begin_agent_turn
+
+                lmstudio_idle_token = begin_agent_turn(self)
+                if lmstudio_idle_token is not None:
+                    # Re-verify the explicit parallel/context contract after an
+                    # idle timer may have unloaded the model.
+                    self._ensure_lmstudio_runtime_loaded(
+                        getattr(self, "_config_context_length", None)
+                    )
+            except Exception:
+                logger.warning(
+                    "Could not prepare LM Studio idle-unload lifecycle",
+                    exc_info=True,
+                )
             # Serialize the full load -> run -> flush region across Hermes
             # processes. Gateway's asyncio lease closes alias routing inside one
             # process; this durable lease covers Desktop, CLI resume, gateway,
@@ -9091,6 +9119,15 @@ class AIAgent:
                         reset_accounting_context(acct_token)
                     if token is not None:
                         reset_conversation_context(token)
+                    try:
+                        from agent.lmstudio_idle import end_agent_turn
+
+                        end_agent_turn(lmstudio_idle_token)
+                    except Exception:
+                        logger.warning(
+                            "Could not finalize LM Studio idle-unload lifecycle",
+                            exc_info=True,
+                        )
 
     def chat(self, message: str, stream_callback: Optional[callable] = None) -> str:
         """

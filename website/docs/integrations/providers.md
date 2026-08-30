@@ -955,6 +955,27 @@ Set it back to the default explicit preload behavior with:
 hermes config set model.lmstudio_load_mode explicit
 ```
 
+For memory-constrained systems, Hermes can also cap LM Studio's concurrent
+predictions when it explicitly loads the model:
+
+```bash
+hermes config set model.lmstudio_parallel 1
+```
+
+Leave this setting unset to use LM Studio's configured default.
+
+When Hermes uses explicit loading, it can release the model after a quiet
+period while retaining the configured context and parallel limit on the next
+turn:
+
+```bash
+hermes config set model.lmstudio_idle_unload_seconds 300
+```
+
+The default is `0` (disabled). The timer is reset while any LM Studio turn is
+active in the Hermes process. When the model is needed again, Hermes verifies
+and reloads it before sending the request.
+
 **Tool calling:** Supported since LM Studio 0.3.6. Models with native tool-calling training (Qwen 2.5, Llama 3.x, Mistral, Hermes) are auto-detected and shown with a tool badge. Other models use a generic fallback that may be less reliable.
 
 ---

@@ -5089,6 +5089,72 @@ class LMStudioLoadResult(NamedTuple):
     rejected: bool = False
 
 
+def unload_lmstudio_model(
+    model: str,
+    base_url: Optional[str],
+    api_key: Optional[str],
+    timeout: float = 30.0,
+) -> bool:
+    """Unload every active instance of ``model`` from one LM Studio server.
+
+    Returns ``True`` when the model is already idle or every discovered
+    instance was unloaded. Network, authentication, and malformed-state
+    failures return ``False`` so an idle helper never claims memory was freed
+    when the management request could not be verified.
+    """
+    server_root = _lmstudio_server_root(base_url)
+    if not server_root or not model:
+        return False
+    try:
+        raw_models = _lmstudio_fetch_raw_models(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=min(timeout, 10.0),
+        )
+    except Exception:
+        return False
+    if raw_models is None:
+        return False
+
+    target = next(
+        (
+            entry
+            for entry in raw_models
+            if isinstance(entry, dict)
+            and (entry.get("key") == model or entry.get("id") == model)
+        ),
+        None,
+    )
+    if target is None:
+        return False
+    instances = target.get("loaded_instances")
+    if not isinstance(instances, list):
+        return False
+    instance_ids = [
+        str(instance.get("id") or "").strip()
+        for instance in instances
+        if isinstance(instance, dict) and str(instance.get("id") or "").strip()
+    ]
+    if not instance_ids:
+        return True
+
+    headers = _lmstudio_request_headers(api_key)
+    headers["Content-Type"] = "application/json"
+    for instance_id in instance_ids:
+        request = urllib.request.Request(
+            server_root + "/api/v1/models/unload",
+            data=json.dumps({"instance_id": instance_id}).encode(),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with _urlopen_model_catalog_request(request, timeout=timeout) as response:
+                response.read()
+        except Exception:
+            return False
+    return True
+
+
 def ensure_lmstudio_model_loaded(
     model: str,
     base_url: Optional[str],
@@ -5097,6 +5163,7 @@ def ensure_lmstudio_model_loaded(
     timeout: float = 120.0,
     *,
     return_load_result: bool = False,
+    parallel: Optional[int] = None,
 ) -> Optional[int] | LMStudioLoadResult:
     """Ensure ``model`` is loaded and return verified runtime context.
 
@@ -5119,7 +5186,7 @@ def ensure_lmstudio_model_loaded(
             return value
         return None
 
-    def _loaded_context(entry: dict) -> Optional[int]:
+    def _loaded_instance(entry: dict) -> Optional[tuple[str, dict, int]]:
         instances = entry.get("loaded_instances")
         if not isinstance(instances, list):
             return None
@@ -5127,8 +5194,9 @@ def ensure_lmstudio_model_loaded(
             config = instance.get("config") if isinstance(instance, dict) else None
             context = config.get("context_length") if isinstance(config, dict) else None
             parsed = _positive_int(context)
-            if parsed is not None:
-                return parsed
+            instance_id = str(instance.get("id") or "").strip() if isinstance(instance, dict) else ""
+            if parsed is not None and instance_id and isinstance(config, dict):
+                return instance_id, config, parsed
         return None
 
     def _find_entry(raw_models: list[dict]) -> Optional[dict]:
@@ -5144,6 +5212,9 @@ def ensure_lmstudio_model_loaded(
     explicit_context = _positive_int(target_context_length)
     if target_context_length is not None and explicit_context is None:
         return _result(None)
+    explicit_parallel = _positive_int(parallel)
+    if parallel is not None and explicit_parallel is None:
+        return _result(None, rejected=True)
 
     headers = _lmstudio_request_headers(api_key)
 
@@ -5162,17 +5233,39 @@ def ensure_lmstudio_model_loaded(
     if explicit_context is not None and max_ctx is not None and explicit_context > max_ctx:
         return _result(None, rejected=True)
 
-    current_context = _loaded_context(target_entry)
-    if current_context is not None:
-        return _result(current_context)
+    current_instance = _loaded_instance(target_entry)
+    if current_instance is not None:
+        instance_id, current_config, current_context = current_instance
+        current_parallel = _positive_int(current_config.get("parallel"))
+        if explicit_parallel is None or current_parallel == explicit_parallel:
+            return _result(current_context)
+
+        unload_body = json.dumps({"instance_id": instance_id}).encode()
+        unload_headers = dict(headers)
+        unload_headers["Content-Type"] = "application/json"
+        try:
+            unload_request = urllib.request.Request(
+                server_root + "/api/v1/models/unload",
+                data=unload_body,
+                headers=unload_headers,
+                method="POST",
+            )
+            with _urlopen_model_catalog_request(unload_request, timeout=timeout) as resp:
+                resp.read()
+        except Exception:
+            return _result(None, load_attempted=True)
 
     loaded_instances = target_entry.get("loaded_instances")
-    if not isinstance(loaded_instances, list) or loaded_instances:
+    if not isinstance(loaded_instances, list) or (
+        loaded_instances and current_instance is None
+    ):
         return _result(None)
 
     load_payload: dict[str, Any] = {"model": model, "echo_load_config": True}
     if explicit_context is not None:
         load_payload["context_length"] = explicit_context
+    if explicit_parallel is not None:
+        load_payload["parallel"] = explicit_parallel
     body = json.dumps(load_payload).encode()
     load_headers = dict(headers)
     load_headers["Content-Type"] = "application/json"
@@ -5208,7 +5301,8 @@ def ensure_lmstudio_model_loaded(
     if refreshed_models is None:
         return _result(None, load_attempted=True)
     refreshed_entry = _find_entry(refreshed_models)
-    refreshed_context = _loaded_context(refreshed_entry) if refreshed_entry is not None else None
+    refreshed_instance = _loaded_instance(refreshed_entry) if refreshed_entry is not None else None
+    refreshed_context = refreshed_instance[2] if refreshed_instance is not None else None
     return _result(refreshed_context, load_attempted=True)
 
 

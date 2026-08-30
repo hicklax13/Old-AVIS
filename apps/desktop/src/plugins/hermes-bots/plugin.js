@@ -5699,6 +5699,21 @@ async function openStoredBotChat(owner, storedId, summary) {
     tabTitle: CANONICAL_CHAT_TITLE
   })
 
+  // The first call can register and hydrate a brand-new tile while the
+  // transient Bots home remains the selected sibling. Re-open without a
+  // hydration request to take the now-registered fast path, which only fronts
+  // that exact Bot Chat tab. This keeps the home as a failure fallback during
+  // the expensive wake, then guarantees a successful click becomes visible.
+  await host.openSession(storedId, {
+    ...(route ? { route } : {}),
+    profile: name,
+    intent: 'tab',
+    keepAllProfilesScope: true,
+    workspaceMode: 'bots',
+    workspaceOwnerKey: ownerKey,
+    tabTitle: CANONICAL_CHAT_TITLE
+  })
+
   return storedId
 }
 

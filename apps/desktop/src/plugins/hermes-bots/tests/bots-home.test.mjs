@@ -448,7 +448,7 @@ test('opening a remote bot selects and opens its exact owner chat', async () => 
   const openBotChat = t.$openBotChat.get()
   assert.equal(openBotChat?.key, 'work-vps::researcher')
   assert.equal(openBotChat?.openedRegistryId, 'chat-work-vps-researcher')
-  assert.equal(t.sessionOpens.length, 1)
+  assert.equal(t.sessionOpens.length, 2)
   assert.equal(t.sessionOpens[0].options.workspaceMode, 'bots')
   assert.equal(t.sessionOpens[0].options.workspaceOwnerKey, 'bot:work-vps::researcher')
   assert.equal(t.sessionOpens[0].options.tabTitle, 'Bot Chat')
@@ -475,7 +475,7 @@ test('a remote owner opens its chat without closing an unrelated group tab', asy
   assert.equal(t.botsHomeVisible(), false)
   assert.equal(t.$groupChatWorkspace.get(), null)
   assert.equal(groupEntry.disposed, false, 'explicit selection must not close an unrelated group tab')
-  assert.equal(t.sessionOpens.length, 1)
+  assert.equal(t.sessionOpens.length, 2)
 })
 
 test('a remote owner does not depend on the informational home surface', async () => {
@@ -498,7 +498,7 @@ test('a remote owner does not depend on the informational home surface', async (
   assert.equal(result, true)
   assert.equal(t.$groupChatWorkspace.get(), null)
   assert.equal(groupEntry.disposed, false)
-  assert.equal(t.sessionOpens.length, 1)
+  assert.equal(t.sessionOpens.length, 2)
 })
 
 test('a failed local open leaves no phantom owner in the center', async () => {
@@ -722,14 +722,18 @@ test('choosing a group prevents a stale canonical-chat open from closing it late
 
   let finishOpen
   let markOpenStarted
+  let openCalls = 0
   const openStarted = new Promise(resolve => {
     markOpenStarted = resolve
   })
-  t.host.openSession = () =>
-    new Promise(resolve => {
+  t.host.openSession = () => {
+    openCalls += 1
+    if (openCalls > 1) return Promise.resolve()
+    return new Promise(resolve => {
       finishOpen = resolve
       markOpenStarted()
     })
+  }
   t.host.request = async method => {
     if (method === 'session.list') {
       return { sessions: [{ id: 'bot-chat', title: 'Bot Chat', message_count: 4 }] }
@@ -839,14 +843,14 @@ test('an explicit remote selection opens its owner tab without moving the focuse
   await t.openRosterBot({ connectionId: 'work-vps', connectionLabel: 'Work', name: 'scout', remoteSource: true })
 
   assert.equal(t.opened.length, 0)
-  assert.equal(t.sessionOpens.length, 1)
+  assert.equal(t.sessionOpens.length, 2)
   assert.equal(t.$selectedRosterKey.get(), 'work-vps::scout')
   assert.equal(t.$openBotChat.get().key, 'work-vps::scout')
   assert.equal(t.focused.get(), 'local-scout-chat')
 
   // Browsing more remote owners opens that owner without reusing the first.
   await t.openRosterBot({ connectionId: 'work-vps', connectionLabel: 'Work', name: 'relay', remoteSource: true })
-  assert.equal(t.sessionOpens.length, 2)
+  assert.equal(t.sessionOpens.length, 4)
   assert.equal(t.$selectedRosterKey.get(), 'work-vps::relay')
 })
 

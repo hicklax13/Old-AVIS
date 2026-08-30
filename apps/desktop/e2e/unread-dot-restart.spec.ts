@@ -137,12 +137,21 @@ test.describe('unread dot survives app restart', () => {
       })
       .toBeGreaterThan(0)
 
+    // The sidebar list can hydrate before the restored foreground session has
+    // finished rebinding. Wait for B's transcript so its late resume cannot
+    // overwrite the explicit click on A below.
+    await page.waitForFunction(
+      expected => (document.querySelector('[data-slot="aui_thread-viewport"]')?.textContent ?? '').includes(expected),
+      SECOND_PROMPT,
+      { timeout: 60_000 },
+    )
+
     // ── 5. Open session A — the dot clears ─────────────────────────────
     // The dot sits inside A's sidebar row button; click that row.
-    await unreadDots(page)
+    const unreadRow = unreadDots(page)
       .first()
-      .locator('xpath=ancestor::button[1]')
-      .click()
+      .locator('xpath=ancestor::*[@data-slot="session-row"][1]')
+    await unreadRow.click()
 
     await expect
       .poll(() => unreadDots(page).count(), {

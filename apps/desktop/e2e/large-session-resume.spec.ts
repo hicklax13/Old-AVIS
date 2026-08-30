@@ -26,6 +26,7 @@ const EXPECTED_TEXT = 'E2E persisted user message 52'
 // oldest row means the baseline reflects the fully-mounted transcript.
 const OLDEST_SEEDED_TEXT = 'E2E persisted user message 0: audit the compatibility matrix'
 const BACKGROUND_PROMPT = 'E2E background inference must remain attached across resume'
+const BACKGROUND_REPLY = 'E2E held background inference completed exactly once.'
 const HISTORY_TURNS = Array.from(
   { length: 27 },
   (_, index) => `E2E persisted user message ${index * 2}: audit the compatibility matrix`,
@@ -173,10 +174,11 @@ async function assertUnchangedResume(page: Page, testInfo: TestInfo): Promise<vo
 
   const paints = await paintState(page)
   expect(await textNodeOccurrences(page, EXPECTED_TEXT), 'the resumed user message should appear once').toBe(1)
-  // A warm session first restores its retained view, then reconciles it with the
-  // authoritative transcript. That is bounded at two builds; a third paint was
-  // the old eager-prefetch + runtime-rebuild regression. A cold restore has one.
-  expect(paints.bursts, `unexpected transcript paint count: ${JSON.stringify(paints.timeline)}`).toBeLessThanOrEqual(2)
+  // Long transcripts intentionally backfill in bounded 60-cost-unit steps
+  // after the small first paint. This 54-message fixture needs two such steps,
+  // so three additive bursts are the designed upper bound. The old regression
+  // rebuilt the full authoritative transcript again after those steps.
+  expect(paints.bursts, `unexpected transcript paint count: ${JSON.stringify(paints.timeline)}`).toBeLessThanOrEqual(3)
 }
 
 test.describe('large session resume', () => {
@@ -212,7 +214,10 @@ test.describe('large session resume', () => {
 
   for (const resumeKind of ['fast', 'cold'] as const) {
     test(`${resumeKind} resume keeps background inference attached without duplicate messages`, async ({}, testInfo) => {
-      fixture = await setupSeededDesktop({ holdFirstStreamForPrompt: BACKGROUND_PROMPT })
+      fixture = await setupSeededDesktop({
+        holdFirstStreamForPrompt: BACKGROUND_PROMPT,
+        heldStreamReply: BACKGROUND_REPLY,
+      })
       await waitForAppReady(fixture, 120_000)
 
       await openSeededSession(fixture.page)
@@ -226,7 +231,7 @@ test.describe('large session resume', () => {
         OLDEST_SEEDED_TEXT,
         { timeout: 30_000 },
       )
-      const initialMockReplyCount = await textNodeOccurrences(fixture.page, MOCK_REPLY)
+      expect(await textNodeOccurrences(fixture.page, BACKGROUND_REPLY)).toBe(0)
       await submitPrompt(fixture.page, BACKGROUND_PROMPT)
       await fixture.mock.waitForHeldStream()
       await openNewSession(fixture.page)
@@ -239,7 +244,7 @@ test.describe('large session resume', () => {
       fixture.mock.releaseHeldStream()
       await fixture.page.waitForFunction(
         expected => (document.querySelector('[data-slot="aui_thread-viewport"]')?.textContent ?? '').includes(expected),
-        MOCK_REPLY,
+        BACKGROUND_REPLY,
         { timeout: 60_000 },
       )
       await fixture.page.waitForTimeout(300)
@@ -247,9 +252,9 @@ test.describe('large session resume', () => {
 
       expect(await textNodeOccurrences(fixture.page, BACKGROUND_PROMPT), 'the running user prompt should appear once').toBe(1)
       expect(
-        await textNodeOccurrences(fixture.page, MOCK_REPLY),
+        await textNodeOccurrences(fixture.page, BACKGROUND_REPLY),
         'the completed assistant reply should add exactly one transcript row',
-      ).toBe(initialMockReplyCount + 1)
+      ).toBe(1)
     })
   }
 })

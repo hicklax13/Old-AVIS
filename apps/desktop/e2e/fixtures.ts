@@ -249,6 +249,9 @@ export function buildAppEnv(sandbox: Sandbox, extra: Record<string, string> = {}
     // The dev-server check in main.ts looks for this env var; if it's set,
     // it loads from the vite URL instead of the local file.
     ...extra,
+    // Keep Playwright's blue-accented Electron fixture off the user's desktop.
+    // Tests still drive the fully rendered page over Electron's CDP transport.
+    HERMES_DESKTOP_E2E_HIDDEN: '1',
   }
 }
 
@@ -287,19 +290,24 @@ export function findElectron(): string {
   // In dev mode, we use the `electron` binary directly (not the packaged app).
   // The dev:electron script in package.json does exactly this: `electron .`
   // after building. We replicate that here.
-  const localElectron = path.join(REPO_ROOT, 'node_modules', 'electron', 'dist', 'electron')
+  const executableName = process.platform === 'win32' ? 'electron.exe' : 'electron'
+  const localElectrons = [
+    path.join(REPO_ROOT, 'node_modules', 'electron', 'dist', executableName),
+    path.join(DESKTOP_ROOT, 'node_modules', 'electron', 'dist', executableName),
+  ]
 
-  if (fs.existsSync(localElectron)) {
-    return localElectron
+  for (const localElectron of localElectrons) {
+    if (fs.existsSync(localElectron)) return localElectron
   }
 
   // Fall back to PATH
-  const result = spawnSync('which', ['electron'], {
+  const locator = process.platform === 'win32' ? 'where.exe' : 'which'
+  const result = spawnSync(locator, ['electron'], {
     encoding: 'utf8',
   })
 
   if (result.status === 0 && result.stdout.trim()) {
-    return result.stdout.trim()
+    return result.stdout.trim().split(/\r?\n/, 1)[0]
   }
 
   throw new Error(
@@ -658,7 +666,11 @@ export async function waitForAppReady(fixture: MockBackendFixture | NoProviderFi
   // wireWindowReveal's post-load fallback in production — but the DOM can be
   // ready before that lands. Poll until the window is actually visible so
   // interactions (click, screenshot) don't hit a hidden surface.
-  if (app) {
+  const intentionallyHidden = app
+    ? await app.evaluate(() => process.env.HERMES_DESKTOP_E2E_HIDDEN === '1').catch(() => false)
+    : false
+
+  if (app && !intentionallyHidden) {
     const deadline = Date.now() + timeoutMs
 
     while (Date.now() < deadline) {

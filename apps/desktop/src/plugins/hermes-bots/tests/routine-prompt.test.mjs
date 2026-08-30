@@ -6,6 +6,25 @@ import vm from 'node:vm'
 
 const pluginSource = readFileSync(new URL('../plugin.js', import.meta.url), 'utf8')
 
+function runInPosixShell(script) {
+  const candidates = process.platform === 'win32'
+    ? [
+        process.env.ProgramFiles && `${process.env.ProgramFiles}\\Git\\bin\\bash.exe`,
+        process.env.LOCALAPPDATA && `${process.env.LOCALAPPDATA}\\Programs\\Git\\bin\\bash.exe`
+      ].filter(Boolean)
+    : ['sh']
+
+  let lastError
+  for (const shell of candidates) {
+    if (process.platform === 'win32' && !existsSync(shell)) continue
+    const result = spawnSync(shell, ['-c', script], { encoding: 'utf8' })
+    if (!result.error) return result
+    lastError = result.error
+  }
+
+  throw lastError ?? new Error('A POSIX shell is required for this quoting test')
+}
+
 function load(request = async () => ({ jobs: [] })) {
   const values = new Map()
   const atom = initial => {
@@ -58,7 +77,7 @@ test('security: delegated routine arguments remain literal shell values', () => 
   const prompt = __routines.routinePrompt('research', title, instruction, 'default')
   const command = prompt.slice(prompt.indexOf('hermes '), prompt.lastIndexOf('\n\nIf the command'))
   const script = `hermes() { printf '%s\\037' "$@"; }\n${command}`
-  const result = spawnSync('sh', ['-c', script], { encoding: 'utf8' })
+  const result = runInPosixShell(script)
 
   assert.equal(result.status, 0, result.stderr)
   assert.deepEqual(result.stdout.split('\x1f').slice(0, -1), [
@@ -138,7 +157,7 @@ test('security: upgrade pauses persisted delegated routines before they can exec
   assert.equal(runtime.__routines.isLegacyDelegatedRoutine({ ...persisted, prompt_preview: recreated.slice(0, 100) }), false)
   const command = recreated.slice(recreated.indexOf('hermes '), recreated.lastIndexOf('\n\nIf the command'))
   const script = `hermes() { printf '%s\\037' "$@"; }\n${command}`
-  const executed = spawnSync('sh', ['-c', script], { encoding: 'utf8' })
+  const executed = runInPosixShell(script)
   assert.equal(executed.status, 0, executed.stderr)
   assert.deepEqual(executed.stdout.split('\x1f').slice(0, -1), [
     '-p',

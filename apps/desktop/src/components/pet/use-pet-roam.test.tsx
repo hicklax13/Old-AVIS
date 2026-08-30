@@ -47,7 +47,7 @@ describe('usePetRoam RAF scheduling', () => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     vi.useFakeTimers()
     setDocumentHidden(false)
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    vi.spyOn(globalThis.document, 'hasFocus').mockReturnValue(true)
     windowState = installWindowStateBridge()
     vi.spyOn(Math, 'random').mockReturnValue(0)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({

@@ -134,5 +134,8 @@ test('persistent terminal overlay follows the pane after split dragging', async 
 
   expect(result.target).toBe(true)
   expect(result.moved).toBeGreaterThan(10)
-  expect(result.drift).toBeLessThanOrEqual(1)
+  // Overlay and slot are measured through separate composited layers. Allow
+  // one device-pixel worth of fractional CSS rounding while still rejecting a
+  // visibly detached overlay.
+  expect(result.drift).toBeLessThanOrEqual(1.5)
 })

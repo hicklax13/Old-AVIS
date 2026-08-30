@@ -413,7 +413,7 @@ describe('ConnectionSwitcher', () => {
 
       fireEvent.pointerDown(trigger, { button: 0, pointerType: 'mouse' })
       expect(screen.queryByRole('menuitemradio', { name: 'W2Probe' })).toBeNull()
-      fireEvent.keyDown(document, { key: 'Escape' })
+      fireEvent.keyDown(globalThis.document, { key: 'Escape' })
 
       // The save lands in Electron's registry…
       electronRegistry = after

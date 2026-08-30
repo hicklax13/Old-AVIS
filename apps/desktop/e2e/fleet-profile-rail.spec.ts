@@ -44,16 +44,26 @@ interface RemoteGateway {
 }
 
 function findHermesBinary(): string {
-  const venv = path.join(REPO_ROOT, '.venv', 'bin', 'hermes')
+  const executable = (root: string): string =>
+    process.platform === 'win32'
+      ? path.join(root, 'Scripts', 'hermes.exe')
+      : path.join(root, 'bin', 'hermes')
+  const candidates = [
+    process.env.VIRTUAL_ENV && executable(process.env.VIRTUAL_ENV),
+    executable(path.join(REPO_ROOT, '.venv')),
+    executable(path.join(REPO_ROOT, 'venv')),
+    executable(path.join(REPO_ROOT, '.hermes', 'hermes-agent', 'venv')),
+  ].filter((candidate): candidate is string => Boolean(candidate))
 
-  if (fs.existsSync(venv)) {
-    return venv
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate
   }
 
-  const result = spawnSync('which', ['hermes'], { encoding: 'utf8' })
+  const locator = process.platform === 'win32' ? 'where.exe' : 'which'
+  const result = spawnSync(locator, ['hermes'], { encoding: 'utf8' })
 
   if (result.status === 0 && result.stdout.trim()) {
-    return result.stdout.trim()
+    return result.stdout.trim().split(/\r?\n/, 1)[0]
   }
 
   throw new Error('hermes binary not found: create the repo venv (uv sync) or put hermes on PATH')

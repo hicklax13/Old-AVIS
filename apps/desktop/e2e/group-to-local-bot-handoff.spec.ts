@@ -57,7 +57,7 @@ test('local bot replaces an open group main workspace', async () => {
   await expect(groupTab).toHaveAttribute('aria-selected', 'true')
   await expect(groupComposer).toBeVisible()
 
-  const programmer = page.getByRole('button', { name: /^Programmer\b/ }).filter({ visible: true }).first()
+  const programmer = page.getByRole('button', { name: "Open Programmer's chat", exact: true })
   await programmer.click()
 
   const botChatTab = page.getByRole('tab', { name: /Bot Chat Close/ }).filter({ visible: true })

@@ -1,10 +1,31 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process'
+import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { createInterface } from 'node:readline'
 
 const DESKTOP_ROOT = path.resolve(import.meta.dirname, '..')
 const REPO_ROOT = path.resolve(DESKTOP_ROOT, '..', '..')
 const DEFAULT_TIMEOUT_MS = 60_000
+
+function findHermesPython(): string {
+  const executablePath = (root: string): string =>
+    process.platform === 'win32'
+      ? path.join(root, 'Scripts', 'python.exe')
+      : path.join(root, 'bin', 'python')
+  const candidates = [
+    process.env.VIRTUAL_ENV && executablePath(process.env.VIRTUAL_ENV),
+    executablePath(path.join(REPO_ROOT, '.venv')),
+    executablePath(path.join(REPO_ROOT, 'venv')),
+  ].filter((candidate): candidate is string => Boolean(candidate))
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue
+    const probe = spawnSync(candidate, ['-c', 'import dotenv'], { encoding: 'utf8' })
+    if (probe.status === 0) return candidate
+  }
+
+  throw new Error('No Hermes Python environment with installed dependencies was found')
+}
 
 interface JsonRpcError {
   code?: number
@@ -71,7 +92,7 @@ export class RealSessionBuilder {
   private closed = false
 
   private constructor(hermesHome: string) {
-    this.child = spawn('uv', ['run', '--active', '--no-sync', 'python', '-m', 'tui_gateway.entry'], {
+    this.child = spawn(findHermesPython(), ['-m', 'tui_gateway.entry'], {
       cwd: REPO_ROOT,
       env: {
         ...process.env,

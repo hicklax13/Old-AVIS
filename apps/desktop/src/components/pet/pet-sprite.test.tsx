@@ -81,7 +81,7 @@ describe('PetSprite RAF scheduling', () => {
     vi.useFakeTimers()
     setDocumentHidden(false)
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 })
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    vi.spyOn(globalThis.document, 'hasFocus').mockReturnValue(true)
     windowState = installWindowStateBridge()
     vi.stubGlobal(
       'Image',

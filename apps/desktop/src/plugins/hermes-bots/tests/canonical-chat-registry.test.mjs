@@ -80,7 +80,8 @@ test('open resolves the profile\u2019s "Bot Chat" row by exact title and opens i
   const opened = await runtime.openBotCanonicalChat('ops')
   assert.equal(opened.registryId, 'forever-chat')
   assert.equal(opened.openedId, 'forever-chat')
-  assert.equal(runtime.opened.length, 1)
+  assert.equal(runtime.opened.length, 2,
+    'the hydrated open is followed by one focus-only pass after the tile registers')
   assert.equal(runtime.opened[0].id, 'forever-chat')
   assert.equal(runtime.opened[0].options.profile, 'ops')
   assert.equal(runtime.opened[0].options.keepAllProfilesScope, true,
@@ -89,6 +90,9 @@ test('open resolves the profile\u2019s "Bot Chat" row by exact title and opens i
   assert.equal(runtime.opened[0].options.workspaceMode, 'bots')
   assert.equal(runtime.opened[0].options.workspaceOwnerKey, 'bot:ops')
   assert.equal(runtime.opened[0].options.tabTitle, 'Bot Chat')
+  assert.equal(runtime.opened[1].id, 'forever-chat')
+  assert.equal(runtime.opened[1].options.awaitHydration, undefined,
+    'the focus pass must not request a second resume')
 
   const list = runtime.requests.find(r => r.method === 'session.list')
   assert.equal(list?.params?.title, 'Bot Chat', 'lookup is by exact title')

@@ -38,10 +38,10 @@ function mountMenu() {
 }
 
 function attach(html: string): HTMLElement {
-  const host = document.createElement('div')
+  const host = globalThis.document.createElement('div')
 
   host.innerHTML = html
-  document.body.appendChild(host)
+  globalThis.document.body.appendChild(host)
 
   return host
 }
@@ -52,7 +52,7 @@ afterEach(() => {
   closeRightRail()
   cleanup()
   vi.restoreAllMocks()
-  document.body.innerHTML = ''
+  globalThis.document.body.innerHTML = ''
   delete desktopWindow.hermesDesktop
 })
 
@@ -205,7 +205,7 @@ describe('AppContextMenu', () => {
 
     await waitFor(() => expect(contextMenuEdit).toHaveBeenCalledWith('copy'))
     expect($contextMenu.get()).toBeNull()
-    expect(document.activeElement).toBe(textarea)
+    expect(globalThis.document.activeElement).toBe(textarea)
   })
 
   it('keeps a modal textarea paste menu inside its dialog and restores focus', async () => {
@@ -242,7 +242,7 @@ describe('AppContextMenu', () => {
     fireEvent.click(paste)
 
     await waitFor(() => expect(contextMenuEdit).toHaveBeenCalledWith('paste'))
-    expect(document.activeElement).toBe(textarea)
+    expect(globalThis.document.activeElement).toBe(textarea)
   })
 
   it('grays out cut and copy when the field has text but no selection', async () => {
@@ -300,7 +300,7 @@ describe('AppContextMenu', () => {
       expect(textarea.selectionEnd).toBe('alpha beta gamma'.length)
     })
     expect(contextMenuEdit).not.toHaveBeenCalled()
-    expect(document.activeElement).toBe(textarea)
+    expect(globalThis.document.activeElement).toBe(textarea)
   })
 
   it('splits select all into its own section under the edit verbs', async () => {

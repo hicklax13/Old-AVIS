@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tip, TipKeybindLabel } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { openExternalLink } from '@/lib/external-link'
 import { compactNumber } from '@/lib/format'
 import { triggerHaptic } from '@/lib/haptics'
 import { formatModifierToken } from '@/lib/keybinds/combo'
@@ -334,6 +335,10 @@ function TitlebarToolButton({ navigate, tool }: { navigate: ReturnType<typeof us
           <a
             aria-label={tool.label}
             href={tool.href}
+            onClick={event => {
+              event.preventDefault()
+              openExternalLink(tool.href || '')
+            }}
             onPointerDown={event => event.stopPropagation()}
             rel="noreferrer"
             target="_blank"

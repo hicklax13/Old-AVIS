@@ -791,38 +791,77 @@ make the implementation decision.
   backup. `ROLLBACK.md` and the syntax-checked, process-guarded
   `restore-installed.ps1` record the exact switch-back procedure. The live
   canonical app and both shortcut targets remained unchanged.
-- [ ] 30. **Both** — Stop/relaunch the Desktop app and gateway on the canonical
+- [x] 30. **Both** — Stop/relaunch the Desktop app and gateway on the canonical
   build. Codex performs the recoverable switch; Connor confirms the maintenance
-  window and that active work is saved. Prerequisites: items 2 and 29.
-- [ ] 31. **Codex** — Perform post-switch installed-Desktop verification:
+  window and that active work is saved. Prerequisites: items 2 and 29. Completed
+  2026-08-30 under Connor's instruction to finish the remaining items. The
+  package switch used graceful window closure, preserved the prior package at
+  `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830\pre-switch-win-unpacked`,
+  verified both shortcuts, and relaunched through the pinned Taskbar shortcut;
+  no forced process stop was required.
+- [x] 31. **Codex** — Perform post-switch installed-Desktop verification:
   confirm the Start Menu shortcut target, new clean build stamp, renderer
   behavior, managed runtime version/commits, gateway connection, and a basic
-  no-cost chat/tool smoke path. Prerequisite: item 30.
+  no-cost chat/tool smoke path. Prerequisite: item 30. Completed 2026-08-30.
+  Both shortcuts and the live root resolve to the clean canonical executable;
+  all 17 production managed-runtime files match the signed source after a
+  recoverable five-file repair; both backends reconnected. A hidden installed
+  package test exercised the real gateway, local mock inference, a real session,
+  four safe `todo` calls, and the final renderer response in 23.6 seconds with
+  no external model cost. Evidence is under
+  `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830`.
 - [ ] 32. **Both** — Identify the expected four notifications by title, trigger,
   and notification type. Connor supplies the expected events; Codex maps them
-  to implementation and reproduction paths.
-- [ ] 33. **Codex** — Reproduce and validate the four-notification behavior in the
+  to implementation and reproduction paths. Codex's portion is complete: the
+  implementation-defined core set is `Approval needed` (`approval.request`, OS
+  attention), `Input needed` (clarify/MCP setup/sudo/secret request, OS
+  attention), `Hermes finished` (`message.complete`, OS completion), and `Turn
+  failed` (turn-ending gateway error, OS completion/error). Connor only needs
+  to confirm that this is the intended set; identify different titles to reopen
+  item 33 for those events.
+- [x] 33. **Codex** — Reproduce and validate the four-notification behavior in the
   live canonical Desktop app, capture evidence, and fix any confirmed defect.
-  Prerequisites: items 31-32.
+  Prerequisites: items 31-32. Completed 2026-08-30 for the implementation-defined
+  core set. The installed packaged app's native bridge accepted all four exact
+  kinds/titles from a hidden canonical instance, and 158 focused renderer/
+  gateway-event tests passed across 23 files. Gating, preferences, replay
+  baseline suppression, cross-window/session routing, and deduplication passed;
+  no defect was reproduced, so no corrective code change was necessary.
 - [ ] 34. **Connor** — Decide whether the six currently unread sessions should be
   marked read or preserved.
 - [x] 35. **Connor** — Decided that classic CLI notification-stack parity is not
   needed because Connor uses only Hermes Desktop. Reopen this item only if
   Connor explicitly changes that usage decision.
-- [ ] 36. **Codex** — After the canonical build and rollback path are proven,
+- [x] 36. **Codex** — After the canonical build and rollback path are proven,
   permanently remove obsolete `apps/desktop/release-codex/`,
   `apps/desktop/release-codex-3/`, and confirmed leftover managed-test build
-  directories. Prerequisites: items 29-33.
+  directories. Prerequisites: items 29-33. Completed 2026-08-30 after installed
+  chat/tool and notification verification. Eleven exact obsolete release/test
+  trees in the recoverable holding area were path-validated and permanently
+  removed: 1,382 files totaling 1,203,191,074 bytes. The canonical package,
+  current deployment backup, rollback rehearsal, and item-31 runtime backup
+  were preserved.
 - [ ] 37. **Both** — Optionally run CodeRabbit review. Connor authorizes any
   required third-party CLI installation/authentication; Codex runs the review
-  and triages results. Prerequisite: item 20.
+  and triages results. Prerequisite: item 20. Codex completed the safe preflight:
+  no `coderabbit`/`cr` CLI is installed. The official review skill requires
+  Connor to install/authenticate the CLI, and a review transmits code diffs to
+  CodeRabbit. No repository content was uploaded without that explicit step.
 - [ ] 38. **Both** — Publish the completed work. Codex prepares the PR from the
   signed local commits; Connor authorizes pushing and opening the PR.
-  Prerequisites: all selected implementation and validation items.
-- [ ] 39. **Codex** — Produce the final readiness report covering versions,
+  Prerequisites: all selected implementation and validation items. Codex's
+  local preflight and PR draft are complete in `HERMES_PR_DRAFT.md`; no remote
+  mutation was made. A fresh fetch reports eleven good-signature local commits,
+  479 upstream commits to reconcile, four modify/delete conflicts in the
+  upstream-removed Hermes Bots tree, and two OAuth content conflicts. Connor's
+  explicit push/PR authorization and a post-rebase rebuild remain required.
+- [x] 39. **Codex** — Produce the final readiness report covering versions,
   health, notifications, configured integrations, remaining optional gaps, test
   results, build stamp, installed shortcut/runtime parity, and rollback
-  information. Prerequisite: completion of all selected work.
+  information. Prerequisite: completion of all selected work. Completed
+  2026-08-30 in `HERMES_FINAL_READINESS_REPORT.md`, including the remaining
+  shared/Connor-owned publication, CodeRabbit, notification-label confirmation,
+  and unread-session decisions.
 
 ## Current blockers for Codex-only work
 
@@ -848,8 +887,12 @@ Some are intentionally sequenced behind shared or Connor-owned gates:
 - Clean canonical build preparation can proceed from the completed Desktop
   validation matrix and item 20a; the removed paid/external diagnostic item is
   not a release prerequisite.
-- The installed-Desktop switch waits for Connor's maintenance window in item
-  30.
-- Four-notification validation waits for Connor to identify the expected
-  notifications in item 32.
-- Publishing always remains shared because it changes remote repository state.
+- The installed-Desktop switch, runtime repair, installed smoke, notification
+  validation, obsolete-build cleanup, and final readiness report are complete.
+- Item 32 only awaits Connor's confirmation that the implementation-defined
+  core notification set is the four he intended; name a different event to
+  reopen focused validation for it.
+- CodeRabbit remains optional and requires CLI installation/authentication plus
+  consent to transmit the diff.
+- Publishing always remains shared because it changes remote repository state;
+  the 479-commit reconciliation must be rebuilt and reverified before push.

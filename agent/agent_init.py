@@ -1820,6 +1820,8 @@ def init_agent(
     # explicit for backward compatibility; users with LM Studio Auto-Evict can
     # opt into JIT via ``model.lmstudio_load_mode: jit``.
     agent.lmstudio_load_mode = "explicit"
+    agent.lmstudio_parallel = None
+    agent.lmstudio_idle_unload_seconds = 0
     try:
         _model_section = _agent_cfg.get("model", {})
         if isinstance(_model_section, dict):
@@ -1831,8 +1833,33 @@ def init_agent(
                     "Invalid model.lmstudio_load_mode=%r; expected 'explicit' or 'jit'. Using explicit.",
                     _model_section.get("lmstudio_load_mode"),
                 )
+            _parallel = _model_section.get("lmstudio_parallel")
+            if _parallel is not None:
+                if isinstance(_parallel, int) and not isinstance(_parallel, bool) and _parallel > 0:
+                    agent.lmstudio_parallel = _parallel
+                else:
+                    logger.warning(
+                        "Invalid model.lmstudio_parallel=%r; expected a positive integer. Using LM Studio's default.",
+                        _parallel,
+                    )
+            _idle_unload = _model_section.get("lmstudio_idle_unload_seconds")
+            if _idle_unload is not None:
+                if (
+                    isinstance(_idle_unload, int)
+                    and not isinstance(_idle_unload, bool)
+                    and _idle_unload >= 0
+                ):
+                    agent.lmstudio_idle_unload_seconds = _idle_unload
+                else:
+                    logger.warning(
+                        "Invalid model.lmstudio_idle_unload_seconds=%r; expected "
+                        "a non-negative integer. Idle unloading is disabled.",
+                        _idle_unload,
+                    )
     except Exception:
         agent.lmstudio_load_mode = "explicit"
+        agent.lmstudio_parallel = None
+        agent.lmstudio_idle_unload_seconds = 0
 
     try:
         agent._tool_guardrails = ToolCallGuardrailController(

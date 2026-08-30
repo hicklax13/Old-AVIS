@@ -44,3 +44,5 @@ No credential or `.env` content is included. Connor explicitly authorized the
 push and PR creation on 2026-08-30. CodeRabbit 0.7.5 was installed and
 authenticated without paid credits, but its review service closed before
 analysis despite all doctor checks passing; no external findings were returned.
+
+Published upstream as `https://github.com/NousResearch/hermes-agent/pull/98393`.

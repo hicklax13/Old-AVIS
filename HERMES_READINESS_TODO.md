@@ -857,7 +857,7 @@ make the implementation decision.
   were returned. Paid `--use-credits` was intentionally not enabled under
   Connor's no-paid-services rule. This optional external-service failure is
   recorded rather than represented as a successful review.
-- [ ] 38. **Both** — Publish the completed work. Codex prepares the PR from the
+- [x] 38. **Both** — Publish the completed work. Codex prepares the PR from the
   signed local commits; Connor authorizes pushing and opening the PR.
   Prerequisites: all selected implementation and validation items. Codex's
   local preflight and PR draft are complete in `HERMES_PR_DRAFT.md`; Connor
@@ -873,8 +873,9 @@ make the implementation decision.
   completed with 8,684 passes, 34 skips, and four timeouts/cascade failures in
   the single `keys-settings.test.tsx` file; its complete four-test focused run
   then passed with one worker and a 30-second timeout. Remote publication is the
-  next active step; the final clean package will be rebuilt from the published
-  HEAD.
+  published to Connor's fork and opened upstream as
+  `https://github.com/NousResearch/hermes-agent/pull/98393` on 2026-08-30. The
+  final clean package will be rebuilt from the published HEAD.
 - [x] 39. **Codex** — Produce the final readiness report covering versions,
   health, notifications, configured integrations, remaining optional gaps, test
   results, build stamp, installed shortcut/runtime parity, and rollback

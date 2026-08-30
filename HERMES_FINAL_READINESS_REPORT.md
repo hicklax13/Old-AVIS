@@ -129,7 +129,8 @@ the normal default.
   endpoint closed the WebSocket before analysis in full, light, agent, and
   plain modes. Usage remained zero, no findings were returned, and paid credits
   were not enabled.
-- Pushing and opening the PR are authorized and in progress.
+- The signed branch is published to Connor's fork and upstream PR
+  `https://github.com/NousResearch/hermes-agent/pull/98393` is open.
 
 ## Verification summary
 

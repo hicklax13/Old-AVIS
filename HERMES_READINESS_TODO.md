@@ -748,17 +748,49 @@ make the implementation decision.
   skipped), 7,998 Desktop Vitest tests (34 skipped), all 625 Desktop plugin
   tests, TypeScript typechecking, ESLint, Python compilation, `git diff
   --check`, and a secret-shape scan. The eight-profile capability dry run also
-  confirmed zero config, environment, or skill drift. A final clean-tree and
-  signature read-back follows this documentation commit before item 27.
-- [ ] 27. **Codex** — Build the updated canonical Desktop package with a current,
-  clean, verifiable build stamp. Prerequisite: item 26.
-- [ ] 28. **Codex** — Smoke-test the packaged Desktop artifact itself in an
+  confirmed zero config, environment, or skill drift. The final read-back
+  confirmed all six commits had good SSH signatures and the tree was clean
+  before item 27.
+- [x] 27. **Codex** — Build the updated canonical Desktop package with a current,
+  clean, verifiable build stamp. Prerequisite: item 26. Completed 2026-08-30:
+  `npm run build` produced a clean stamp for commit
+  `0bae5382b0653ba2a6f69830dcc025fddcbf45d3` on `main` at
+  `2026-08-30T04:27:27.837Z`, and Electron Builder produced the isolated x64
+  candidate at
+  `C:\Dev\hermes-agent-release-candidates\20260830-0bae5382\win-unpacked\Hermes.exe`.
+  Its SHA-256 is
+  `beff8d7d5cd4d9d17853da61096da07f994680e6953514249ffc481814c5bbd1`;
+  the PE machine is `0x8664`, and the package contains `app.asar`, the clean
+  install stamp, and the unpacked Windows x64 native dependencies. The
+  canonical installed package was not changed.
+- [x] 28. **Codex** — Smoke-test the packaged Desktop artifact itself in an
   isolated `HERMES_HOME`: verify Electron startup, renderer loading, backend
   startup/connection, native dependencies, and the packaged Playwright path
-  before replacing the installed copy. Prerequisite: item 27.
-- [ ] 29. **Codex** — Create and verify a recoverable backup of the currently
+  before replacing the installed copy. Prerequisite: item 27. Completed
+  2026-08-30: a direct Playwright launch of the isolated candidate passed with
+  exit code zero in both fake-boot and real-backend phases. Electron 40.10.2
+  loaded the packaged `app.asar` renderer with the Hermes title and populated
+  root, every test window remained hidden, `node-pty` loaded with a callable
+  `spawn`, and the packaged `get-windows` module was present. The real source
+  backend opened a credential-bearing loopback WebSocket, delivered
+  `gateway.ready`, and returned `setup.status`. Evidence is under
+  `C:\Dev\hermes-agent-release-candidates\20260830-0bae5382\evidence`.
+  Teardown left zero candidate processes and zero test `electron.exe`
+  processes.
+- [x] 29. **Codex** — Create and verify a recoverable backup of the currently
   installed Desktop package, launcher, shortcut target, and build stamp; record
-  the exact rollback procedure. Prerequisite: item 28.
+  the exact rollback procedure. Prerequisite: item 28. Completed 2026-08-30:
+  the installed package, release-root installer/launcher files, install stamp,
+  and canonical Taskbar and Start Menu shortcuts were preserved at
+  `C:\Dev\hermes-agent-recovery\installed-backup-pre-0bae5382-20260830`.
+  The package contains 457 files totaling 401,028,743 bytes; its installed
+  executable SHA-256 is
+  `c59f80147534be516299a758aaaee3c36165bf7cafbb7fce7d309dfcb2d5d1c1`.
+  Full manifests prove the source stayed stable during backup, the backup
+  matches the source, and the separately copied rollback rehearsal matches the
+  backup. `ROLLBACK.md` and the syntax-checked, process-guarded
+  `restore-installed.ps1` record the exact switch-back procedure. The live
+  canonical app and both shortcut targets remained unchanged.
 - [ ] 30. **Both** — Stop/relaunch the Desktop app and gateway on the canonical
   build. Codex performs the recoverable switch; Connor confirms the maintenance
   window and that active work is saved. Prerequisites: items 2 and 29.

@@ -13,11 +13,12 @@ Windows shortcuts still target it, the normal-profile gateway reconnects after
 a pinned-shortcut launch, and no test `electron.exe` remains. No Codex-owned
 runtime or notification defect is open.
 
-Remote publication is intentionally not complete. Connor must explicitly
-authorize pushing/opening a PR, and the local line must first be reconciled
-with the 479 newer commits on `origin/main`. Optional CodeRabbit review also
-remains outside the delivered result because its CLI is not installed or
-authenticated and running it sends code diffs to CodeRabbit.
+Connor authorized remote publication. The signed local line has been rebased
+onto current `origin/main`, is zero commits behind and eleven commits ahead,
+and has passed the post-rebase verification matrix. Branch publication and PR
+creation are the active final handoff steps; the installed package described
+below remains the last verified pre-rebase rollback point until the final HEAD
+is rebuilt and switched canonically.
 
 ## Installed Desktop and runtime
 
@@ -122,17 +123,24 @@ the normal default.
   unsupported control integration.
 - Microsoft Graph personal delegated access is not a ready Hermes connector;
   iCloud on Windows is limited, and Xbox control is classified unsupported.
-- Connor still owns the decision to preserve or mark read the six unread
-  sessions.
-- CodeRabbit is optional and pending CLI installation, authentication, and
-  explicit consent to upload the diff for review.
-- Pushing and opening a PR remain pending Connor's explicit authorization.
+- The six unread sessions were preserved; no read state was changed.
+- CodeRabbit CLI 0.7.5 is installed and authenticated in both supported WSL and
+  signed native Windows modes. Every doctor check passes, but its no-cost review
+  endpoint closed the WebSocket before analysis in full, light, agent, and
+  plain modes. Usage remained zero, no findings were returned, and paid credits
+  were not enabled.
+- Pushing and opening the PR are authorized and in progress.
 
 ## Verification summary
 
-- Pre-build affected Python suite: 1,285 passed, five skipped.
-- Pre-build Desktop Vitest suite: 7,998 passed, 34 skipped.
-- Desktop plugin suite: 625 passed.
+- Post-rebase affected Python suite: 1,293 passed, five skipped.
+- Post-rebase Desktop Vitest suite: 8,675 passed, 34 skipped in the initial
+  saturated run; all 13 timed-out/environment-dependent cases passed in focused
+  reruns. The bounded-worker full rerun then recorded 8,684 passed and 34
+  skipped, with its only four failures confined to the same timing-sensitive
+  `keys-settings.test.tsx` file. That complete file passed 4/4 immediately in a
+  one-worker focused rerun with a 30-second timeout (its slow test took 13.1s,
+  inside that limit but near the full suite's 15-second default).
 - TypeScript typecheck, ESLint, Python compilation, `git diff --check`, secret
   shape scan, and all-profile capability read-back passed before packaging.
 - Packaged candidate fake-boot and real-backend hidden smoke tests passed.
@@ -164,15 +172,14 @@ window closure; neither required a forced process stop.
 
 ## Publication readiness
 
-After a fresh fetch, local `main` is eleven signed commits ahead and 479 commits
-behind `origin/main`. Every local commit reports a good SSH signature. A
-read-only merge-tree rehearsal identified six conflicts before publication:
-
-- Four modify/delete conflicts under the upstream-removed
-  `apps/desktop/src/plugins/hermes-bots/` tree.
-- Content conflicts in `tools/mcp_oauth_manager.py` and
-  `tests/tools/test_mcp_oauth_bidirectional.py`.
-
-No push, PR, rebase, or remote mutation has been performed. Reconciliation
-must be followed by the relevant tests and a new clean Desktop build before the
-rebased result can replace this locally verified package.
+The prior line is recoverable from
+`codex/hermes-desktop-readiness-pre-rebase-20260830`. The active
+`codex/hermes-desktop-readiness` branch was rebased with commit signing onto
+`origin/main` at `26350357d76e4508c8df9304a3374bdc5a6f6220` and is now zero
+commits behind and eleven commits ahead. Every local commit reports a good SSH
+signature. The four upstream-deleted Hermes Bots files remained deleted, while
+the OAuth conflict resolution preserves upstream's serialized resource lock,
+the explicit interactive-authorization path, and both regression test classes.
+A fresh merge-tree rehearsal is conflict-free. Publication is authorized; a
+new clean Desktop package and canonical installed smoke must be produced from
+the final published HEAD before the older locally verified package is replaced.

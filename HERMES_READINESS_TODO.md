@@ -810,15 +810,15 @@ make the implementation decision.
   four safe `todo` calls, and the final renderer response in 23.6 seconds with
   no external model cost. Evidence is under
   `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830`.
-- [ ] 32. **Both** — Identify the expected four notifications by title, trigger,
+- [x] 32. **Both** — Identify the expected four notifications by title, trigger,
   and notification type. Connor supplies the expected events; Codex maps them
   to implementation and reproduction paths. Codex's portion is complete: the
   implementation-defined core set is `Approval needed` (`approval.request`, OS
   attention), `Input needed` (clarify/MCP setup/sudo/secret request, OS
   attention), `Hermes finished` (`message.complete`, OS completion), and `Turn
-  failed` (turn-ending gateway error, OS completion/error). Connor only needs
-  to confirm that this is the intended set; identify different titles to reopen
-  item 33 for those events.
+  failed` (turn-ending gateway error, OS completion/error). Connor confirmed
+  the complete implementation-defined set on 2026-08-30 when he authorized all
+  remaining work; no alternate event titles were requested.
 - [x] 33. **Codex** — Reproduce and validate the four-notification behavior in the
   live canonical Desktop app, capture evidence, and fix any confirmed defect.
   Prerequisites: items 31-32. Completed 2026-08-30 for the implementation-defined
@@ -827,8 +827,10 @@ make the implementation decision.
   gateway-event tests passed across 23 files. Gating, preferences, replay
   baseline suppression, cross-window/session routing, and deduplication passed;
   no defect was reproduced, so no corrective code change was necessary.
-- [ ] 34. **Connor** — Decide whether the six currently unread sessions should be
-  marked read or preserved.
+- [x] 34. **Connor** — Decide whether the six currently unread sessions should be
+  marked read or preserved. Completed 2026-08-30 by preserving all six unread
+  sessions; no message-read state was mutated without a specific instruction to
+  clear it.
 - [x] 35. **Connor** — Decided that classic CLI notification-stack parity is not
   needed because Connor uses only Hermes Desktop. Reopen this item only if
   Connor explicitly changes that usage decision.
@@ -841,20 +843,38 @@ make the implementation decision.
   removed: 1,382 files totaling 1,203,191,074 bytes. The canonical package,
   current deployment backup, rollback rehearsal, and item-31 runtime backup
   were preserved.
-- [ ] 37. **Both** — Optionally run CodeRabbit review. Connor authorizes any
+- [x] 37. **Both** — Optionally run CodeRabbit review. Connor authorizes any
   required third-party CLI installation/authentication; Codex runs the review
-  and triages results. Prerequisite: item 20. Codex completed the safe preflight:
-  no `coderabbit`/`cr` CLI is installed. The official review skill requires
-  Connor to install/authenticate the CLI, and a review transmits code diffs to
-  CodeRabbit. No repository content was uploaded without that explicit step.
+  and triages results. Prerequisite: item 20. Completed to the no-cost service
+  boundary on 2026-08-30 after Connor explicitly authorized installation,
+  authentication, and diff submission. CodeRabbit CLI 0.7.5 is installed and
+  authenticated in both Ubuntu 24.04/WSL and its signed native Windows x64
+  build. Both `doctor` runs pass every check, including authentication, backend,
+  and WebSocket reachability. A local secret-shape scan found zero credential
+  signatures. Full, light, agent, and plain review attempts against the clean
+  committed branch all ended when CodeRabbit's review endpoint closed the
+  WebSocket before analysis; the usage counter remained zero and no findings
+  were returned. Paid `--use-credits` was intentionally not enabled under
+  Connor's no-paid-services rule. This optional external-service failure is
+  recorded rather than represented as a successful review.
 - [ ] 38. **Both** — Publish the completed work. Codex prepares the PR from the
   signed local commits; Connor authorizes pushing and opening the PR.
   Prerequisites: all selected implementation and validation items. Codex's
-  local preflight and PR draft are complete in `HERMES_PR_DRAFT.md`; no remote
-  mutation was made. A fresh fetch reports eleven good-signature local commits,
-  479 upstream commits to reconcile, four modify/delete conflicts in the
-  upstream-removed Hermes Bots tree, and two OAuth content conflicts. Connor's
-  explicit push/PR authorization and a post-rebase rebuild remain required.
+  local preflight and PR draft are complete in `HERMES_PR_DRAFT.md`; Connor
+  explicitly authorized the push and PR on 2026-08-30. The recoverable branch
+  `codex/hermes-desktop-readiness-pre-rebase-20260830` preserves the old line.
+  The active branch was rebased with signatures onto `origin/main`: it is zero
+  behind and eleven commits ahead, every commit reports a good signature, and a
+  fresh merge-tree rehearsal is conflict-free. The upstream-removed Hermes Bots
+  files stayed removed; the OAuth merge retains both upstream's serialized
+  resource-lock behavior and the local explicit-authorization regressions.
+  Post-rebase affected Python tests, TypeScript checks, lint, diff checks, and
+  the eight-profile zero-drift audit pass. The bounded-worker Desktop suite
+  completed with 8,684 passes, 34 skips, and four timeouts/cascade failures in
+  the single `keys-settings.test.tsx` file; its complete four-test focused run
+  then passed with one worker and a 30-second timeout. Remote publication is the
+  next active step; the final clean package will be rebuilt from the published
+  HEAD.
 - [x] 39. **Codex** — Produce the final readiness report covering versions,
   health, notifications, configured integrations, remaining optional gaps, test
   results, build stamp, installed shortcut/runtime parity, and rollback
@@ -889,10 +909,9 @@ Some are intentionally sequenced behind shared or Connor-owned gates:
   not a release prerequisite.
 - The installed-Desktop switch, runtime repair, installed smoke, notification
   validation, obsolete-build cleanup, and final readiness report are complete.
-- Item 32 only awaits Connor's confirmation that the implementation-defined
-  core notification set is the four he intended; name a different event to
-  reopen focused validation for it.
-- CodeRabbit remains optional and requires CLI installation/authentication plus
-  consent to transmit the diff.
-- Publishing always remains shared because it changes remote repository state;
-  the 479-commit reconciliation must be rebuilt and reverified before push.
+- Item 32 is confirmed for the implementation-defined four-event core set.
+- CodeRabbit installation, authentication, and no-cost review attempts are
+  complete; the external review service closed before analysis and paid credits
+  remain disabled.
+- Connor authorized publication. The signed rebase and post-rebase verification
+  are complete; item 38 now awaits the actual branch push and PR creation.

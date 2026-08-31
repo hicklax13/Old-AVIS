@@ -187,9 +187,9 @@ window closure; neither required a forced process stop.
 The prior line is recoverable from
 `codex/hermes-desktop-readiness-pre-rebase-20260830`. The active
 `codex/hermes-desktop-readiness` branch was rebased with commit signing onto
-`origin/main` at `26350357d76e4508c8df9304a3374bdc5a6f6220` and is now zero
-commits behind and eleven commits ahead. Every local commit reports a good SSH
-signature. The four upstream-deleted Hermes Bots files remained deleted, while
+`origin/main` at `26350357d76e4508c8df9304a3374bdc5a6f6220`. Every local commit
+reports a good SSH signature. The four upstream-deleted Hermes Bots files
+remained deleted, while
 the OAuth conflict resolution preserves upstream's serialized resource lock,
 the explicit interactive-authorization path, and both regression test classes.
 A fresh merge-tree rehearsal is conflict-free. Publication, the published-HEAD

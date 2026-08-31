@@ -873,9 +873,9 @@ make the implementation decision.
   local preflight and PR draft are complete in `HERMES_PR_DRAFT.md`; Connor
   explicitly authorized the push and PR on 2026-08-30. The recoverable branch
   `codex/hermes-desktop-readiness-pre-rebase-20260830` preserves the old line.
-  The active branch was rebased with signatures onto `origin/main`: it is zero
-  behind and eleven commits ahead, every commit reports a good signature, and a
-  fresh merge-tree rehearsal is conflict-free. The upstream-removed Hermes Bots
+  The active branch was rebased with signatures onto `origin/main`; every
+  commit reports a good signature, and a fresh merge-tree rehearsal is
+  conflict-free. The upstream-removed Hermes Bots
   files stayed removed; the OAuth merge retains both upstream's serialized
   resource-lock behavior and the local explicit-authorization regressions.
   Post-rebase affected Python tests, TypeScript checks, lint, diff checks, and

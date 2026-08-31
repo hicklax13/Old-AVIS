@@ -753,16 +753,16 @@ make the implementation decision.
   before item 27.
 - [x] 27. **Codex** — Build the updated canonical Desktop package with a current,
   clean, verifiable build stamp. Prerequisite: item 26. Completed 2026-08-30:
-  `npm run build` produced a clean stamp for commit
-  `0bae5382b0653ba2a6f69830dcc025fddcbf45d3` on `main` at
-  `2026-08-30T04:27:27.837Z`, and Electron Builder produced the isolated x64
+  superseded 2026-08-31 by the post-rebase package built from published commit
+  `35c44b1db1ee6ca844032556bc71d09f05a111c4` on
+  `codex/hermes-desktop-readiness`. Its clean stamp is dated
+  `2026-08-30T06:18:02.186Z`; Electron Builder produced the isolated x64
   candidate at
-  `C:\Dev\hermes-agent-release-candidates\20260830-0bae5382\win-unpacked\Hermes.exe`.
+  `C:\Dev\hermes-agent-release-candidates\20260830-35c44b1d\win-unpacked\Hermes.exe`.
   Its SHA-256 is
-  `beff8d7d5cd4d9d17853da61096da07f994680e6953514249ffc481814c5bbd1`;
-  the PE machine is `0x8664`, and the package contains `app.asar`, the clean
-  install stamp, and the unpacked Windows x64 native dependencies. The
-  canonical installed package was not changed.
+  `2d4d422e278de78c7622c5ded9b3e09b86e2df21625b1f6c96e273086ca5880d`;
+  the PE machine is `0x8664`, and all 457 package files were independently
+  audited before installation.
 - [x] 28. **Codex** — Smoke-test the packaged Desktop artifact itself in an
   isolated `HERMES_HOME`: verify Electron startup, renderer loading, backend
   startup/connection, native dependencies, and the packaged Playwright path
@@ -774,7 +774,9 @@ make the implementation decision.
   `spawn`, and the packaged `get-windows` module was present. The real source
   backend opened a credential-bearing loopback WebSocket, delivered
   `gateway.ready`, and returned `setup.status`. Evidence is under
-  `C:\Dev\hermes-agent-release-candidates\20260830-0bae5382\evidence`.
+  `C:\Dev\hermes-agent-release-candidates\20260830-35c44b1d\evidence` for the
+  final published candidate (`candidate-audit.json`, `candidate-smoke.json`,
+  `fake-boot.png`, and `real-backend.png`).
   Teardown left zero candidate processes and zero test `electron.exe`
   processes.
 - [x] 29. **Codex** — Create and verify a recoverable backup of the currently
@@ -782,10 +784,10 @@ make the implementation decision.
   the exact rollback procedure. Prerequisite: item 28. Completed 2026-08-30:
   the installed package, release-root installer/launcher files, install stamp,
   and canonical Taskbar and Start Menu shortcuts were preserved at
-  `C:\Dev\hermes-agent-recovery\installed-backup-pre-0bae5382-20260830`.
-  The package contains 457 files totaling 401,028,743 bytes; its installed
+  `C:\Dev\hermes-agent-recovery\installed-backup-pre-35c44b1d-20260830`.
+  The package contains 457 files totaling 401,014,519 bytes; its installed
   executable SHA-256 is
-  `c59f80147534be516299a758aaaee3c36165bf7cafbb7fce7d309dfcb2d5d1c1`.
+  `beff8d7d5cd4d9d17853da61096da07f994680e6953514249ffc481814c5bbd1`.
   Full manifests prove the source stayed stable during backup, the backup
   matches the source, and the separately copied rollback rehearsal matches the
   backup. `ROLLBACK.md` and the syntax-checked, process-guarded
@@ -796,20 +798,25 @@ make the implementation decision.
   window and that active work is saved. Prerequisites: items 2 and 29. Completed
   2026-08-30 under Connor's instruction to finish the remaining items. The
   package switch used graceful window closure, preserved the prior package at
-  `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830\pre-switch-win-unpacked`,
-  verified both shortcuts, and relaunched through the pinned Taskbar shortcut;
-  no forced process stop was required.
+  `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\pre-switch-win-unpacked`,
+  verified both shortcuts, installed the published-HEAD candidate byte-for-byte,
+  and relaunched through the pinned Taskbar shortcut; no forced process stop
+  was required.
 - [x] 31. **Codex** — Perform post-switch installed-Desktop verification:
   confirm the Start Menu shortcut target, new clean build stamp, renderer
   behavior, managed runtime version/commits, gateway connection, and a basic
   no-cost chat/tool smoke path. Prerequisite: item 30. Completed 2026-08-30.
   Both shortcuts and the live root resolve to the clean canonical executable;
-  all 17 production managed-runtime files match the signed source after a
-  recoverable five-file repair; both backends reconnected. A hidden installed
-  package test exercised the real gateway, local mock inference, a real session,
-  four safe `todo` calls, and the final renderer response in 23.6 seconds with
-  no external model cost. Evidence is under
-  `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830`.
+  all 17 production managed-runtime files match the signed post-rebase source
+  after a recoverable nine-file reconciliation; Python syntax compilation
+  passed for all 17. A direct live-renderer probe of the canonical executable
+  and normal profile observed the Hermes title and Desktop bridge, minted a
+  protected loopback gateway connection, returned `setup.status`, and listed
+  all eight profiles. The final read-back confirmed the exact executable hash
+  and clean stamp, both shortcut targets, one pinned-launch root,
+  normal-profile child processes, no temporary debugging flag, zero capability
+  drift, and zero test `electron.exe`. Evidence is under
+  `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830`.
 - [x] 32. **Both** — Identify the expected four notifications by title, trigger,
   and notification type. Connor supplies the expected events; Codex maps them
   to implementation and reproduction paths. Codex's portion is complete: the
@@ -826,7 +833,10 @@ make the implementation decision.
   kinds/titles from a hidden canonical instance, and 158 focused renderer/
   gateway-event tests passed across 23 files. Gating, preferences, replay
   baseline suppression, cross-window/session routing, and deduplication passed;
-  no defect was reproduced, so no corrective code change was necessary.
+  no defect was reproduced, so no corrective code change was necessary. The
+  final published package was rechecked on 2026-08-31 through its live normal
+  profile: the native bridge accepted all four kinds/titles again, and the
+  secret-safe result is captured in `installed-live-smoke.json`.
 - [x] 34. **Connor** — Decide whether the six currently unread sessions should be
   marked read or preserved. Completed 2026-08-30 by preserving all six unread
   sessions; no message-read state was mutated without a specific instruction to
@@ -872,10 +882,13 @@ make the implementation decision.
   the eight-profile zero-drift audit pass. The bounded-worker Desktop suite
   completed with 8,684 passes, 34 skips, and four timeouts/cascade failures in
   the single `keys-settings.test.tsx` file; its complete four-test focused run
-  then passed with one worker and a 30-second timeout. Remote publication is the
-  published to Connor's fork and opened upstream as
+  then passed with one worker and a 30-second timeout. Remote publication was
+  completed to Connor's fork and opened upstream as
   `https://github.com/NousResearch/hermes-agent/pull/98393` on 2026-08-30. The
-  final clean package will be rebuilt from the published HEAD.
+  PR remains open; GitHub currently reports no reviews or status-check results.
+  The final clean package was rebuilt from published HEAD, smoke-tested in
+  isolation, installed canonically, reconciled into the managed runtime, and
+  verified through the normal Desktop profile on 2026-08-31.
 - [x] 39. **Codex** — Produce the final readiness report covering versions,
   health, notifications, configured integrations, remaining optional gaps, test
   results, build stamp, installed shortcut/runtime parity, and rollback
@@ -914,5 +927,7 @@ Some are intentionally sequenced behind shared or Connor-owned gates:
 - CodeRabbit installation, authentication, and no-cost review attempts are
   complete; the external review service closed before analysis and paid credits
   remain disabled.
-- Connor authorized publication. The signed rebase and post-rebase verification
-  are complete; item 38 now awaits the actual branch push and PR creation.
+- Connor authorized publication. The signed rebase, fork push, upstream PR,
+  published-HEAD package, canonical switch, and post-switch verification are
+  complete. Upstream review/merge remains external to the local readiness
+  rollout and is not represented as complete.

@@ -58,6 +58,7 @@ describe('window-open policy (GHSA-9f4c-93c8-jc8g)', () => {
     const handler = createWindowOpenHandler(() => {
       throw new Error('logging blew up')
     })
+
     // The hook is logging-only; even if it throws, the security decision must
     // not silently become "allow". We assert the throw propagates rather than
     // being swallowed into an open — the caller (Electron) treats a throw as

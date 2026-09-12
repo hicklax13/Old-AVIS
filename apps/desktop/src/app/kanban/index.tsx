@@ -67,28 +67,35 @@ export function KanbanView({ className, ...props }: KanbanViewProps) {
 
   useEffect(() => {
     void load()
+
     const tick = () => {
       timer.current = setTimeout(() => {
         void load().then(tick)
       }, 5000)
     }
+
     tick()
+
     return () => {
-      if (timer.current) clearTimeout(timer.current)
+      if (timer.current) {clearTimeout(timer.current)}
     }
   }, [load])
 
   const addCard = useCallback(async () => {
     const trimmed = title.trim()
-    if (!trimmed) return
+
+    if (!trimmed) {return}
     setAdding(true)
+
     try {
       const res = await fetch(KANBAN_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: trimmed, assignee: assignee.trim() })
       })
+
       const data = (await res.json()) as { ok?: boolean; error?: string }
+
       if (data.ok) {
         setTitle('')
         setAssignee('')
@@ -123,7 +130,7 @@ export function KanbanView({ className, ...props }: KanbanViewProps) {
           maxLength={120}
           onChange={event => setTitle(event.target.value)}
           onKeyDown={event => {
-            if (event.key === 'Enter') void addCard()
+            if (event.key === 'Enter') {void addCard()}
           }}
           placeholder="New task title…"
           value={title}
@@ -156,6 +163,7 @@ export function KanbanView({ className, ...props }: KanbanViewProps) {
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-2">
         {(board?.columns ?? []).map(col => {
           const accent = COLUMN_ACCENT[col.key] ?? '#00e5ff'
+
           return (
             <div
               className="flex w-60 shrink-0 flex-col rounded-lg border border-(--ui-stroke-tertiary)"

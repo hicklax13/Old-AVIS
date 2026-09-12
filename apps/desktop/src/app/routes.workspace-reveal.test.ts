@@ -39,7 +39,7 @@ vi.mock('@/components/pane-shell/tree/store', async importOriginal => ({
 
 const { noteActiveTreeGroup, revealTreePane } = await import('@/components/pane-shell/tree/store')
 
-const CONTRIBUTED_ROUTE = '/kanban'
+const CONTRIBUTED_ROUTE = '/example-plugin-page'
 
 function contributeRoute(): () => void {
   return registry.register({

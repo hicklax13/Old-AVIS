@@ -683,6 +683,12 @@ export interface SessionResumeResponse {
   session_key?: string
   started_at?: number
   status?: string
+  /** Latest full task snapshot. Revisions let the renderer reject a response
+   * that raced with a newer live update. */
+  todo_state?: {
+    revision?: number
+    todos?: unknown
+  }
   /** Epoch seconds the current turn started, or null when idle. */
   turn_started_at?: number | null
 }
@@ -1449,6 +1455,7 @@ export interface McpServerSummary {
   args: string[]
   url: string | null
   enabled: boolean
+  blocked_reason: string | null
   tools: string[] | null
 }
 

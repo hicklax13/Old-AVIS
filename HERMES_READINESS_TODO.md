@@ -1,7 +1,10 @@
 # Hermes CLI and Desktop Readiness TODO
 
-Saved on 2026-08-27 after the CLI, Desktop, notification, setup, Git, dependency,
-and test review.
+Originally saved on 2026-08-27 after the CLI, Desktop, notification, setup, Git,
+dependency, and test review. Comprehensively re-audited on 2026-08-31 across the
+repository, project-task history, canonical Desktop installation, normal and
+profile-scoped runtime state, integrations, services, backups, permissions, and
+live logs.
 
 ## Ownership
 
@@ -62,6 +65,379 @@ make the implementation decision.
 - CLI/runtime-only changes remain separate unless the Desktop app consumes them
   through its managed backend. Desktop-visible changes must satisfy the full
   deployment check above even when their source tests already pass.
+
+## Comprehensive audit refresh (2026-08-31)
+
+This audit used repository-wide automated scans plus line-level review of the
+shipped branch, the accessible project-task history, the canonical Desktop and
+normal profile, all eight Hermes profiles, live MCP/service diagnostics, Windows
+process/service/shortcut checks, ACL inspection, backup-content inspection,
+database integrity checks, dependency audits, and focused/full-suite test
+probes. It does not claim that 10,726 tracked files were each read manually.
+
+Verified healthy evidence:
+
+- The taskbar/Start shortcuts and live root process still resolve to the
+  canonical `release\win-unpacked\Hermes.exe`; all visible Hermes processes use
+  that package and no test `electron.exe` remains.
+- All eight profiles still have 19 MCP definitions, 103 installed skill paths,
+  and 37 environment-key names with zero config, environment, or skill drift.
+- All 69 Hermes SQLite databases and the Home Assistant recorder database pass
+  `PRAGMA quick_check`; all Home Assistant JSON storage records are valid.
+- The 1,293 changed-surface Python tests pass with five skips. Desktop Electron
+  tests pass 1,936 with 34 skips. TypeScript typechecking passes. The packaged
+  canonical app, installer, install stamp, renderer payload, and native PTY
+  payload validate without rebuilding or launching a test window.
+- The Desktop production dependency audit and the installed Python-runtime
+  vulnerability audit report zero known vulnerabilities. Added-line scans of
+  the current branch and its 15-commit history found no recognized raw secret
+  patterns. `git fsck` reports no corruption, `git diff --check` passes, and all
+  15 branch commits have good signatures.
+- Home Assistant 2026.8.3, n8n 2.35.7, SearxNG, Tailscale, Telegram, WhatsApp,
+  and the Hermes gateway are running. Home Assistant reports 95 entities and
+  zero `unavailable` entities; nine are `unknown`, mostly expected event,
+  location, backup, and service entities, plus two Roku active-app sensors that
+  need the focused follow-up below.
+
+The evidence also invalidates the prior blanket “fully ready” conclusion. The
+open findings below are ordered by current security risk, active exposure,
+failure impact, and completion value. Item 25 remains deliberately removed.
+
+## Open audit follow-ups — ordered by priority and value
+
+- [x] 40. **Codex** — Lock down sensitive local state and every writer that can
+  recreate it. `C:\Dev\hermes-agent\.hermes`, Home Assistant's config and
+  `.storage` auth records, n8n state, WhatsApp linked-device state, SQLite data,
+  state snapshots, and existing backups previously inherited read access for
+  `BUILTIN\Users` and modify access for `Authenticated Users` plus other broad
+  local principals. The explicitly protected `.env` and `mcp-tokens` trees are
+  not enough. Establish Connor-and-SYSTEM or narrowly service-scoped ACLs,
+  preserve Docker/Desktop operation, remove stale broad inheritance only after
+  resolving required principals, and add read-back tests to every credential,
+  snapshot, and backup writer (including profile-capability sync).
+  Completed 2026-09-01: centralized private-path handling and writer read-backs
+  now cover auth, backup, profile, OAuth, WhatsApp, and capability-sync paths.
+  Verify-only ACL audits passed for 553,830 Hermes-state objects and 779 Home
+  Assistant config objects. The 975-file coherent managed-backend deployment
+  had zero hash mismatches, its recoverable backup verified private, both live
+  Desktop profile backends returned HTTP 200, and the focused security suite
+  passed 268 tests with 10 intentional skips.
+- [x] 41. **Both** — Contain and reconstruct the public upstream contribution.
+  PR `NousResearch/hermes-agent#98393` was open, 354 upstream commits behind,
+  conflicting, has no checks or reviews, and combines about 140 changed files
+  with Connor-specific policy and readiness documents that publicly disclose
+  personal accounts, email addresses, device/home topology, integrations, and
+  local paths. Codex should prepare a private/local home for the personal
+  runbooks, remove the operational material from the complete public branch
+  history, preserve contributor authorship/signatures, split the product work
+  into focused reviewable PRs, rebase on current upstream, and re-run each
+  affected validation matrix. Connor must authorize the public close/replace or
+  history rewrite before Codex changes the remote PR.
+  Completed 2026-09-01 with Connor's authorization: public PR `#98393` is
+  closed, the private recovery archive is retained, and the product work is
+  reconstructed as 12 focused PRs: `#99783`, `#99784`, `#99785`, `#99786`,
+  `#99787`, `#99790`, `#99792`, `#99796`, `#99798`, `#99800`, `#99802`, and
+  `#99803`. Current GitHub read-back confirms the replacement PRs exist and
+  remain independently reviewable against `main`.
+- [x] 42. **Both** — Replace the current backup arrangement with a real,
+  encrypted, least-privilege, restore-tested recovery system. The prior daily
+  `Hermes Project Safe Backup` task returned `0x800710E0`, refused starts
+  on battery, and did not catch up later. Its “credential-excluding” archive
+  included n8n's encryption key beside its database and logs, while
+  all archives inherited broad ACLs. The Home Assistant “pre-Sonos backup” contained
+  only `compose.yaml` and `configuration.yaml`, not `.storage`, the recorder,
+  auth/device registries, or a tested restore. Select a protected recovery-key
+  and destination policy, take application-consistent snapshots, separate or
+  encrypt secret-bearing data, add retention and missed-run recovery, exercise
+  a clean restore, and record objective proof without exposing secrets.
+  Completed 2026-09-01: the encrypted age-based recovery workflow uses
+  application-consistent SQLite snapshots, private staging and manifests,
+  retention, isolated restore verification, and matching-hash local plus
+  OneDrive ciphertext destinations. The scheduled task is Ready, last result
+  `0`, runs on battery, catches up after missed starts, and next runs at 03:30
+  ET. The latest successful archive contains 5,939 files and 49 SQLite
+  snapshots; its restore was exercised without overwriting live state.
+- [ ] 43. **Both** — Complete a credential-exposure response after items 40 and
+  42 prevent re-exposure. There is no evidence of unauthorized use, but broad
+  local ACLs covered pre-update archives containing profile `.env` files and
+  protected state, and earlier project chats contain an n8n password/API token
+  plus one-time OAuth callback codes. Inventory the affected issuers without
+  printing values; rotate the n8n account password/current API token, replace
+  the excessive-scope classic GitHub PAT with least-privilege credentials,
+  revoke/reissue Home Assistant, Telegram, WhatsApp linked-device, provider API,
+  and OAuth material actually present in exposed archives, and verify old
+  credentials fail. Connor handles official sign-in, consent, and revocation;
+  Codex handles the secret-safe inventory, protected updates, and verification.
+  Parked by Connor on 2026-09-01: stop rotating tokens that are working fine.
+  A fresh secret-safe inventory covers 34 issuers across 10 archive records,
+  contains no credential values, and is protected with zero broad ACL entries.
+  The explicitly requested n8n, least-privilege GitHub, and Home Assistant
+  rotations are complete and verified; all other working Telegram, WhatsApp,
+  provider, and OAuth credentials remain untouched. Reopen only on evidence of
+  compromise or a new explicit rotation request.
+- [x] 44. **Codex** — Correct the all-profile capability synchronizer so it
+  enforces Connor's policy without treating every `.env` entry as a globally
+  copyable “static account key.” Add an explicit classification/allowlist for
+  shared static keys versus profile-local identities, rotating OAuth, device
+  sessions, and service-local secrets; reject ambiguous keys and conflicts
+  before writes; secure backup copies; test migrations and rollback; preserve
+  default-profile cloning; and finish with an eight-profile zero-drift read-back.
+  Completed 2026-09-01: shared static keys now use an explicit classification,
+  ambiguous and conflicting values fail before writes, service-local and OAuth
+  state stay profile-local, backups are private, replacement is rollback-safe,
+  and default remains the new-profile baseline. After promoting the current
+  portable Google Workspace helper into canonical `default`, six recoverable
+  skill replacements converged all profiles. Final read-back: 8 profiles, 19
+  MCP servers, 103 installed skill paths, 17 shared static keys, 20 deliberately
+  unmanaged local keys, and zero config, env, skill-copy, or replacement drift.
+- [x] 45. **Codex** — Fix OAuth refresh-token persistence before the next token
+  expiry recreates the browser-loop problem. Hermes' custom successful-refresh
+  handler replaces the complete token object and, unlike the pinned MCP SDK,
+  does not carry forward the prior refresh token or scope when an RFC-compliant
+  provider omits either field. Preserve both values, retain safe expiry and ACL
+  behavior, cover omitted/rotated refresh tokens and scopes in regression tests,
+  and verify a controlled refresh plus cold canonical-Desktop restart.
+  Completed 2026-09-01: the successful-refresh override now carries forward an
+  omitted refresh token and scope while accepting provider-supplied rotations.
+  Controlled persistence checks cover expiry and private ACL read-back; the
+  complete OAuth module passed 65 tests with 1 intentional skip and Ruff is
+  clean. The managed file matches source after a private rollback backup, and a
+  cold pinned-app restart produced one visible canonical window, one renderer,
+  two HTTP-200 profile backends, no test Electron process, and no new OAuth
+  authorization event in the startup log.
+- [x] 46. **Codex** — Make MCP health and diagnostics noninteractive,
+  truthful, and sticky. Terminally parked servers currently retry during
+  recurring health checks and produced 47 Desktop OAuth prompts plus repeated
+  Strava, Indeed, Plaid, and Unreal Engine errors. Health checks must never open
+  a browser; initial OAuth should be lazy and user-invoked; terminal failures
+  should remain parked until config/credential/user action changes; and
+  `hermes mcp test` must offer a fully noninteractive mode and return nonzero on
+  missing auth or failed health. Apply Connor's no-paid-services policy by
+  classifying paid Plaid Production as inactive, classify absent Unreal Engine
+  locally, and give Strava/Indeed accurate official-support states without
+  repeated consent loops while keeping the 15 currently healthy MCPs usable.
+  Completed 2026-09-01: automatic Desktop probes and the REST/CLI diagnostic
+  paths now suppress interactive OAuth; missing auth and failed health return
+  explicit non-retryable failures and CLI exit code 1. Terminal failures stay
+  parked across timer ticks until a manual retry, reconnect, or configuration
+  fingerprint change. All eight profiles converge with 15 active MCPs and the
+  same four reasoned inactive entries: Indeed, Plaid, Strava, and Unreal Engine.
+  Regression proof passed 165 Python tests with 1 intentional skip, 37 Desktop
+  tests, typecheck, Ruff, ESLint, and Prettier. The rebuilt pinned canonical app
+  has one visible window and renderer on the normal profile, two HTTP-200
+  backends, zero test Electron processes, and its live Indeed probe returned a
+  non-retryable missing-token result with no Chrome process launch. Gateway,
+  storage, dashboard, and all 3 configured messaging platforms report healthy.
+- [x] 47. **Both** — Remove the Figma client-identity impersonation and use an
+  officially supported path. Current code registers Hermes as `Claude Code` to
+  bypass Figma's client allowlist, but Figma's official MCP documentation says
+  only catalog-listed clients may connect and directs new client developers to
+  its waitlist. Codex should remove the spoof from the product/public PR and
+  provide a clean disabled/unsupported state or an officially registered Hermes
+  client. Connor chooses whether to disable Figma in Hermes for now or submit
+  the official waitlist/registration; no unofficial impersonation counts as a
+  finished integration.
+  Completed 2026-09-01 using the safe disabled route authorized by Connor's
+  request to complete all five items: Hermes no longer injects `Claude Code`
+  or any other catalog client's identity, and Figma registration failures now
+  direct users only to Figma's official catalog/waitlist path. Figma is
+  reasoned-inactive in all eight profiles; existing OAuth state was retained
+  but not used or rotated. A missed API contract was also fixed so Desktop
+  visibly explains the inactive state. Proof: 67 focused Python tests passed
+  with 1 intentional skip, Ruff/typecheck/ESLint/Prettier are clean, the
+  synchronizer reports zero profile drift, and the rebuilt pinned canonical app
+  read back 14 active/5 inactive MCPs with the Figma reason visible in every
+  profile, one renderer/window, two healthy backends, 3/3 messaging platforms,
+  and zero test Electron processes.
+- [x] 48. **Both** — Replace the YouTube account skill's unsafe manual OAuth
+  flow. It deliberately redirects to `http://localhost:1`, relies on Chrome's
+  unsafe-port error, asks Connor to paste the full callback URL/code into chat,
+  can skip state validation for code-only input, passes secrets in process
+  arguments, installs unpinned runtime dependencies, and has no focused tests.
+  Build a Desktop-mediated or ephemeral loopback PKCE flow with mandatory state
+  validation, protected per-profile token storage, declared/pinned dependencies,
+  cancellation/error handling, and tests; then have Connor complete only the
+  official browser consent and verify a cold-restart read-only call.
+  Completed 2026-09-01 without rotating either working grant. The skill now
+  uses an ephemeral `127.0.0.1` callback, PKCE, mandatory constant-time state
+  validation, an in-memory authorization response, a bounded wait/cancel path,
+  and private atomic credential replacement that preserves an omitted working
+  refresh token. The unsafe port-1/manual callback flags are gone, six Google
+  dependencies are exactly pinned, and all eight profiles read back identical
+  public skill code with protected user/SYSTEM-only credential ACLs. Proof:
+  1,245 focused/authoring tests passed (including a real loopback callback),
+  Ruff and diff checks passed, profile sync reports zero drift, and the pinned
+  canonical Desktop cold-started with two HTTP-200 backends that both expose the
+  enabled `youtube-account` skill. Personal and school profiles each passed an
+  authenticated read-only channel call after restart; both refresh credentials
+  remained unchanged, so no unnecessary browser consent was requested.
+- [x] 49. **Both** — Decide and enforce the intended Home Assistant network
+  boundary. Port 8123 is bound to all interfaces and is reachable through this
+  laptop's Wi-Fi and Tailscale addresses; port 1400 is also bound globally for
+  Sonos callbacks. Connor chooses local-only, selected private-LAN, Tailscale,
+  or intentionally remote access. Codex then binds and firewalls each port to
+  the minimum required interfaces/subnets/devices, preserves Sonos callbacks,
+  confirms unauthenticated API access remains denied, adds TLS/reverse proxy
+  only if genuinely needed, and re-verifies the PWA and Hermes tools.
+  Completion evidence (2026-09-01 EDT): Connor selected Home Wi-Fi plus
+  Tailscale with no public-internet exposure. Docker now publishes ports 8123
+  and 1400 only on `127.0.0.1`; three narrowly scoped Windows port proxies and
+  firewall rules expose HA UI/API to the trusted `192.168.4.0/22` Wi-Fi subnet,
+  UI/API to the private `100.64.0.0/10` tailnet, and Sonos callbacks on port
+  1400 only to the eight discovered Sonos addresses. The Wi-Fi and Tailscale
+  interfaces are Private, there are exactly five intended listeners, and there
+  are zero `0.0.0.0`/IPv6 all-interface listeners. Unauthenticated `/api/`
+  requests returned 401 through loopback, Wi-Fi, and Tailscale; the protected
+  authenticated API returned 200. A DHCP-aware elevated scheduled maintainer
+  runs at logon and every five minutes, reconciles the exact interface address,
+  rules, proxies, Sonos advertise address, and container only when necessary;
+  its Windows PowerShell 5.1 atomic-replacement edge case was found and fixed,
+  then an idempotent scheduled run exited 0 without recreating the container.
+  After a controlled HA restart with the boundary active, a 62-second startup
+  observation showed zero Sonos subscription/callback failures and zero
+  unavailable/unknown states among the 51 returned Sonos entities. The pinned
+  Chrome PWA launched to `Home Assistant - Overview`, and both canonical green
+  Desktop backends returned HTTP 200 with Home Assistant enabled, configured,
+  available, and all four `ha_*` tools present. TLS/reverse proxy was correctly
+  omitted because no public exposure was selected. A pre-change backup is at
+  `C:\Dev\home-assistant\backups\task49-network-boundary-20260901T054821Z`.
+- [x] 50. **Both** — Repair and re-prove the Home Assistant device layer. The
+  last 24 hours contain repeated Sonos subscription/favorites timeouts for the
+  Portable and TV Room speakers, and the Roku active-app sensors remain
+  `unknown` even though no entity is `unavailable`. Codex should diagnose power,
+  addressing, discovery, callback, and polling behavior; classify expected
+  unknown event/backup/location/service entities; reduce persistent error log
+  noise; and run safe read plus explicit user-approved control checks for every
+  Samsung, Roku, LG, Sonos, Nest/Google Cast/TV Remote, and supported network
+  path. Connor handles powered-off devices, pairing prompts, and any disruptive
+  playback/control confirmation.
+  Completion evidence (2026-09-01 EDT): Connor explicitly approved the live,
+  reversible control matrix. Safe refresh/read checks covered all 70 active
+  device entities and all eight Hermes profiles; every profile returned the
+  same 14 media players, and the canonical green Desktop's default and active
+  `google-school` backends both report Home Assistant enabled, configured,
+  available, and exposing all four `ha_*` tools. Control checks preserved
+  volume/mute state on the LG display, both Nest Hubs, and all five visible
+  Sonos rooms; woke and restored both Chromecast/Google TV Remote paths; and
+  woke/restored the Roku TV. While Roku was on, its active-app sensors changed
+  from `unknown` to `Home` and a concrete app ID, proving that their normal
+  `unknown` state is standby behavior rather than a polling failure. Samsung
+  power-off/on was also proved end to end. Docker Desktop could not reliably
+  deliver Samsung Wake-on-LAN onto the physical Eero LAN, so a fixed-target
+  Windows relay now listens only on `127.0.0.1:17655`, rejects non-loopback
+  callers, and is maintained by the limited-user scheduled task
+  `HermesHomeAssistantSamsungWakeRelay`; neither the Wi-Fi nor Tailscale address
+  accepts that port. Home Assistant's official `samsungtv.turn_on` trigger now
+  calls the relay, and a cold control test woke the TV from `off` to `on` in ten
+  seconds. A separately measured successful Samsung shutdown took 31.55
+  seconds, exposing Hermes' false 15-second failure; the source and installed
+  managed runtime now allow 45 seconds for service actions and 60 seconds for
+  the async bridge. Both focused copies pass 39/39 tests without warnings and
+  compile cleanly; the canonical Desktop was relaunched against the repaired
+  runtime. Sonos topology classified three bonded satellites and the ZB100
+  bridge as intentionally invisible; all five visible rooms are available,
+  Portable and TV Room each returned 56 favorites and 16 playlists, and the
+  old callback failures did not recur after item 49's firewall repair. After
+  the final controlled HA restart there are 96 states, zero unavailable
+  entities, exactly nine expected unknown stateless/backup/location/Roku-
+  standby entities, and zero fresh warnings or errors. Loopback, Eero Wi-Fi,
+  and Tailscale authenticated paths all returned HTTP 200; the laptop's live
+  default route is SSID `Eero Hickey` through `192.168.4.1`. Eero's standard
+  UPnP/IGD advertisement is visible to Windows but not to the secure Docker
+  bridge, so no unsupported custom Eero component or multicast-relay exposure
+  was added. The paid Nest SDM route remains deliberately skipped under
+  Connor's no-real-money rule; the two Nest Hubs are fully covered by Google
+  Cast. The pinned Home Assistant PWA is open at `Home Assistant - Overview`.
+  Pre-change backups are at
+  `C:\Dev\home-assistant\backups\task50-device-layer-20260901T065029Z` and
+  `C:\Dev\hermes-agent\.hermes\backups\task50-device-layer-20260901T065029Z`.
+- [x] 51. **Both** — Move Cloudflare from `codemode=false` and 3,408 advertised
+  tools to its official Code Mode search/execute pattern, which keeps the large
+  OpenAPI schema outside model context. Preserve trust/approval boundaries,
+  confirm the reduced tool surface and representative read-only operations in
+  canonical Desktop, and verify persistence after restart. Connor completes a
+  new official grant only if changing the resource invalidates the existing one.
+  Completed September 1, 2026. All eight profiles now enable Cloudflare at the
+  official `https://mcp.cloudflare.com/mcp` endpoint with `auth: oauth`,
+  `trust: untrusted`, and no legacy 3,408-tool filter; the catalog manifest and
+  user guide use the same future-install baseline. Static capability sync made
+  recoverable backups, changed all eight configs, and its final dry run found
+  zero remaining changes. The MCP annotation reader now accepts both the wire
+  `readOnlyHint` and Python SDK `read_only_hint`, so Cloudflare's `docs` and
+  `search` bypass approval while unannotated `execute` still fails closed to the
+  existing per-call gate. Connor completed the replacement official OAuth grant
+  for the active `google-school` profile; OAuth stores were not copied between
+  profiles. Real calls passed: `docs` returned documentation, `search` found
+  `GET /accounts`, and a separately approved GET-only `execute` returned HTTP
+  200 with only an account count. The canonical pinned Desktop was relaunched;
+  its root executable and shortcut remained canonical, the active profile was
+  `google-school`, Cloudflare still showed exactly three enabled tools, and an
+  in-app post-restart session reported `Used 2 tools`, `docs: PASS`,
+  `search: PASS`, and `GET /accounts`. The smoke test also exposed and fixed a
+  duplicate stdio-watcher coroutine construction; the source and managed
+  runtime are identical and the focused trust/catalog/fast-fail suite passes
+  51/51. No test Electron process remained. Pre-change recovery material is at
+  `C:\Dev\hermes-agent\.hermes\backups\task51-cloudflare-codemode-20260901T163012Z`.
+- [ ] 52. **Codex** — Implement a real Windows event-loop liveness witness for
+  the gateway. The live gateway logs show `asyncio.start_unix_server` is absent
+  on Windows, so the loop-tick socket is unavailable and stale-heartbeat probes
+  cannot escalate if the event loop wedges. Use an authenticated named pipe or
+  loopback mechanism with cleanup and identity checks, add Windows failure and
+  recovery tests, deploy it canonically, and prove controlled wedge detection,
+  graceful recovery, and normal Telegram/WhatsApp/Home Assistant continuity.
+- [ ] 53. **Codex** — Repair the canonical Windows Python test harness and
+  finish a trustworthy complete suite. The runner discovered 3,408 files and
+  about 35,474 tests but accumulated 18 failures/errors by 5.8%, repeatedly
+  failed to write `.pytest_cache`, mishandled Windows HOME/symlink/npm/file-URI
+  behavior and Git signing, created a literal `%SystemDrive%` tree in the repo,
+  lacked expected development dependencies, and allowed synthetic test crash
+  records into the live Hermes log. Enforce an isolated temporary HERMES_HOME,
+  complete Windows location variables, no live-state writes, no workspace
+  pollution, deterministic timing, correct dependencies, and a full zero-fail
+  per-file run before relying on repository-wide green claims.
+- [ ] 54. **Codex** — Return the Desktop renderer/E2E matrix to clean green.
+  The ordinary UI run currently has 6,740 passes and 12 failures across keys
+  settings, provider settings, and Windows cron shell escaping; the focused
+  settings files pass but the cron failure reproduces alone. Resolve suite
+  isolation and portable literal-argument handling, the unawaited-coroutine
+  warning, the remaining ESLint `document` warning, and Vite's future
+  `__dirname` incompatibility. Then fix and enable the two explicit warm-resume
+  `test.fixme` regressions (third transcript rebuild and post-inference repaint)
+  and run the complete hidden/isolated Desktop matrix with a final process audit.
+- [ ] 55. **Codex** — Close remaining secret-bearing log and diagnostic paths.
+  The Desktop logs full denied `window.open` URLs including query/fragment data,
+  MCP diagnostics retain credential prefixes/suffixes, and OAuth callback URLs
+  can reach persistent logs. Log only safe origin/path plus structured error
+  classes, fully redact headers/codes/tokens/client secrets, test malicious URL
+  and traceback cases, and validate existing logs/backups without echoing values.
+- [ ] 56. **Codex** — Clean the local SearxNG configuration. Searches work and
+  return results, but startup/runtime logs show failed Ahmia/Torch/Wikidata
+  engines, a missing limiter configuration, missing forwarded-address warnings,
+  and recurring CAPTCHA/rate-limit responses from several engines. Disable
+  unsupported engines or supply their declared dependencies, configure a
+  loopback-appropriate limiter/proxy policy, retain multiple healthy engines,
+  and verify useful results with a quiet error log and no public listener.
+- [ ] 57. **Codex** — Establish reproducible container-image security and update
+  maintenance. Home Assistant Compose uses the mutable `stable` tag while n8n
+  and SearxNG are digest-pinned; the attempted Docker Scout CVE audit failed or
+  stalled on Windows and therefore produced no trustworthy container finding.
+  Use a reliable no-cost scanner, triage high/critical results against vendor
+  releases, pin tested digests/versions, document backup-before-update and
+  rollback, and re-run health/device checks after controlled updates.
+- [ ] 58. **Both** — Perform one planned cold Windows reboot acceptance test
+  after the security, backup, OAuth, service, and package fixes. Verify Docker
+  Desktop startup and all container restart policies, the canonical pinned
+  Hermes app and normal profile, gateway/channels, all-profile capability
+  baseline, OAuth persistence without surprise tabs, Home Assistant PWA/devices,
+  Tailscale, n8n, SearxNG, LM Studio idle behavior, task scheduling, and absence
+  of duplicate/stale processes. Connor chooses the maintenance window and
+  handles any device unlock/sign-in; Codex captures the proof and remedies.
+- [ ] 59. **Codex** — Reconcile every tracked readiness artifact only after the
+  preceding findings are genuinely closed. Update the final report, integration
+  inventory, PR draft, this checklist, stale blocker text, test counts, MCP
+  states, Home Assistant behavior, backup/rollback instructions, and public/private
+  boundaries. Do not restore item 25 or claim “fully ready,” “zero failures,”
+  conflict-free publication, or external completion without fresh evidence.
 
 ## Ordered checklist
 
@@ -399,7 +775,7 @@ make the implementation decision.
     at `apps/desktop/release/win-unpacked-backup-20260828-lmstudio-idle`; the
     canonical app, normal profile, taskbar shortcut, and Start Menu shortcut were
     verified after restart.
-  - [x] 24g. **Connor/Codex** — Applied Connor's existing option-4C maximum-
+  - [x] 24g. **Both** — Applied Connor's existing option-4C maximum-
     coverage decision to the accounts already present in Hermes' protected
     credential stores. Selected current accounts/routes are Nous Portal,
     Anthropic, OpenAI API, xAI API, Gemini, DeepSeek, Hugging Face, OpenRouter,
@@ -753,16 +1129,16 @@ make the implementation decision.
   before item 27.
 - [x] 27. **Codex** — Build the updated canonical Desktop package with a current,
   clean, verifiable build stamp. Prerequisite: item 26. Completed 2026-08-30:
-  `npm run build` produced a clean stamp for commit
-  `0bae5382b0653ba2a6f69830dcc025fddcbf45d3` on `main` at
-  `2026-08-30T04:27:27.837Z`, and Electron Builder produced the isolated x64
+  superseded 2026-08-31 by the post-rebase package built from published commit
+  `35c44b1db1ee6ca844032556bc71d09f05a111c4` on
+  `codex/hermes-desktop-readiness`. Its clean stamp is dated
+  `2026-08-30T06:18:02.186Z`; Electron Builder produced the isolated x64
   candidate at
-  `C:\Dev\hermes-agent-release-candidates\20260830-0bae5382\win-unpacked\Hermes.exe`.
+  `C:\Dev\hermes-agent-release-candidates\20260830-35c44b1d\win-unpacked\Hermes.exe`.
   Its SHA-256 is
-  `beff8d7d5cd4d9d17853da61096da07f994680e6953514249ffc481814c5bbd1`;
-  the PE machine is `0x8664`, and the package contains `app.asar`, the clean
-  install stamp, and the unpacked Windows x64 native dependencies. The
-  canonical installed package was not changed.
+  `2d4d422e278de78c7622c5ded9b3e09b86e2df21625b1f6c96e273086ca5880d`;
+  the PE machine is `0x8664`, and all 457 package files were independently
+  audited before installation.
 - [x] 28. **Codex** — Smoke-test the packaged Desktop artifact itself in an
   isolated `HERMES_HOME`: verify Electron startup, renderer loading, backend
   startup/connection, native dependencies, and the packaged Playwright path
@@ -774,7 +1150,9 @@ make the implementation decision.
   `spawn`, and the packaged `get-windows` module was present. The real source
   backend opened a credential-bearing loopback WebSocket, delivered
   `gateway.ready`, and returned `setup.status`. Evidence is under
-  `C:\Dev\hermes-agent-release-candidates\20260830-0bae5382\evidence`.
+  `C:\Dev\hermes-agent-release-candidates\20260830-35c44b1d\evidence` for the
+  final published candidate (`candidate-audit.json`, `candidate-smoke.json`,
+  `fake-boot.png`, and `real-backend.png`).
   Teardown left zero candidate processes and zero test `electron.exe`
   processes.
 - [x] 29. **Codex** — Create and verify a recoverable backup of the currently
@@ -782,10 +1160,10 @@ make the implementation decision.
   the exact rollback procedure. Prerequisite: item 28. Completed 2026-08-30:
   the installed package, release-root installer/launcher files, install stamp,
   and canonical Taskbar and Start Menu shortcuts were preserved at
-  `C:\Dev\hermes-agent-recovery\installed-backup-pre-0bae5382-20260830`.
-  The package contains 457 files totaling 401,028,743 bytes; its installed
+  `C:\Dev\hermes-agent-recovery\installed-backup-pre-35c44b1d-20260830`.
+  The package contains 457 files totaling 401,014,519 bytes; its installed
   executable SHA-256 is
-  `c59f80147534be516299a758aaaee3c36165bf7cafbb7fce7d309dfcb2d5d1c1`.
+  `beff8d7d5cd4d9d17853da61096da07f994680e6953514249ffc481814c5bbd1`.
   Full manifests prove the source stayed stable during backup, the backup
   matches the source, and the separately copied rollback rehearsal matches the
   backup. `ROLLBACK.md` and the syntax-checked, process-guarded
@@ -796,29 +1174,34 @@ make the implementation decision.
   window and that active work is saved. Prerequisites: items 2 and 29. Completed
   2026-08-30 under Connor's instruction to finish the remaining items. The
   package switch used graceful window closure, preserved the prior package at
-  `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830\pre-switch-win-unpacked`,
-  verified both shortcuts, and relaunched through the pinned Taskbar shortcut;
-  no forced process stop was required.
+  `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\pre-switch-win-unpacked`,
+  verified both shortcuts, installed the published-HEAD candidate byte-for-byte,
+  and relaunched through the pinned Taskbar shortcut; no forced process stop
+  was required.
 - [x] 31. **Codex** — Perform post-switch installed-Desktop verification:
   confirm the Start Menu shortcut target, new clean build stamp, renderer
   behavior, managed runtime version/commits, gateway connection, and a basic
   no-cost chat/tool smoke path. Prerequisite: item 30. Completed 2026-08-30.
   Both shortcuts and the live root resolve to the clean canonical executable;
-  all 17 production managed-runtime files match the signed source after a
-  recoverable five-file repair; both backends reconnected. A hidden installed
-  package test exercised the real gateway, local mock inference, a real session,
-  four safe `todo` calls, and the final renderer response in 23.6 seconds with
-  no external model cost. Evidence is under
-  `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830`.
-- [ ] 32. **Both** — Identify the expected four notifications by title, trigger,
+  all 17 production managed-runtime files match the signed post-rebase source
+  after a recoverable nine-file reconciliation; Python syntax compilation
+  passed for all 17. A direct live-renderer probe of the canonical executable
+  and normal profile observed the Hermes title and Desktop bridge, minted a
+  protected loopback gateway connection, returned `setup.status`, and listed
+  all eight profiles. The final read-back confirmed the exact executable hash
+  and clean stamp, both shortcut targets, one pinned-launch root,
+  normal-profile child processes, no temporary debugging flag, zero capability
+  drift, and zero test `electron.exe`. Evidence is under
+  `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830`.
+- [x] 32. **Both** — Identify the expected four notifications by title, trigger,
   and notification type. Connor supplies the expected events; Codex maps them
   to implementation and reproduction paths. Codex's portion is complete: the
   implementation-defined core set is `Approval needed` (`approval.request`, OS
   attention), `Input needed` (clarify/MCP setup/sudo/secret request, OS
   attention), `Hermes finished` (`message.complete`, OS completion), and `Turn
-  failed` (turn-ending gateway error, OS completion/error). Connor only needs
-  to confirm that this is the intended set; identify different titles to reopen
-  item 33 for those events.
+  failed` (turn-ending gateway error, OS completion/error). Connor confirmed
+  the complete implementation-defined set on 2026-08-30 when he authorized all
+  remaining work; no alternate event titles were requested.
 - [x] 33. **Codex** — Reproduce and validate the four-notification behavior in the
   live canonical Desktop app, capture evidence, and fix any confirmed defect.
   Prerequisites: items 31-32. Completed 2026-08-30 for the implementation-defined
@@ -826,9 +1209,14 @@ make the implementation decision.
   kinds/titles from a hidden canonical instance, and 158 focused renderer/
   gateway-event tests passed across 23 files. Gating, preferences, replay
   baseline suppression, cross-window/session routing, and deduplication passed;
-  no defect was reproduced, so no corrective code change was necessary.
-- [ ] 34. **Connor** — Decide whether the six currently unread sessions should be
-  marked read or preserved.
+  no defect was reproduced, so no corrective code change was necessary. The
+  final published package was rechecked on 2026-08-31 through its live normal
+  profile: the native bridge accepted all four kinds/titles again, and the
+  secret-safe result is captured in `installed-live-smoke.json`.
+- [x] 34. **Connor** — Decide whether the six currently unread sessions should be
+  marked read or preserved. Completed 2026-08-30 by preserving all six unread
+  sessions; no message-read state was mutated without a specific instruction to
+  clear it.
 - [x] 35. **Connor** — Decided that classic CLI notification-stack parity is not
   needed because Connor uses only Hermes Desktop. Reopen this item only if
   Connor explicitly changes that usage decision.
@@ -841,20 +1229,42 @@ make the implementation decision.
   removed: 1,382 files totaling 1,203,191,074 bytes. The canonical package,
   current deployment backup, rollback rehearsal, and item-31 runtime backup
   were preserved.
-- [ ] 37. **Both** — Optionally run CodeRabbit review. Connor authorizes any
+- [x] 37. **Both** — Optionally run CodeRabbit review. Connor authorizes any
   required third-party CLI installation/authentication; Codex runs the review
-  and triages results. Prerequisite: item 20. Codex completed the safe preflight:
-  no `coderabbit`/`cr` CLI is installed. The official review skill requires
-  Connor to install/authenticate the CLI, and a review transmits code diffs to
-  CodeRabbit. No repository content was uploaded without that explicit step.
-- [ ] 38. **Both** — Publish the completed work. Codex prepares the PR from the
+  and triages results. Prerequisite: item 20. Completed to the no-cost service
+  boundary on 2026-08-30 after Connor explicitly authorized installation,
+  authentication, and diff submission. CodeRabbit CLI 0.7.5 is installed and
+  authenticated in both Ubuntu 24.04/WSL and its signed native Windows x64
+  build. Both `doctor` runs pass every check, including authentication, backend,
+  and WebSocket reachability. A local secret-shape scan found zero credential
+  signatures. Full, light, agent, and plain review attempts against the clean
+  committed branch all ended when CodeRabbit's review endpoint closed the
+  WebSocket before analysis; the usage counter remained zero and no findings
+  were returned. Paid `--use-credits` was intentionally not enabled under
+  Connor's no-paid-services rule. This optional external-service failure is
+  recorded rather than represented as a successful review.
+- [x] 38. **Both** — Publish the completed work. Codex prepares the PR from the
   signed local commits; Connor authorizes pushing and opening the PR.
   Prerequisites: all selected implementation and validation items. Codex's
-  local preflight and PR draft are complete in `HERMES_PR_DRAFT.md`; no remote
-  mutation was made. A fresh fetch reports eleven good-signature local commits,
-  479 upstream commits to reconcile, four modify/delete conflicts in the
-  upstream-removed Hermes Bots tree, and two OAuth content conflicts. Connor's
-  explicit push/PR authorization and a post-rebase rebuild remain required.
+  local preflight and PR draft are complete in `HERMES_PR_DRAFT.md`; Connor
+  explicitly authorized the push and PR on 2026-08-30. The recoverable branch
+  `codex/hermes-desktop-readiness-pre-rebase-20260830` preserves the old line.
+  The active branch was rebased with signatures onto `origin/main`; every
+  commit reports a good signature, and a fresh merge-tree rehearsal is
+  conflict-free. The upstream-removed Hermes Bots
+  files stayed removed; the OAuth merge retains both upstream's serialized
+  resource-lock behavior and the local explicit-authorization regressions.
+  Post-rebase affected Python tests, TypeScript checks, lint, diff checks, and
+  the eight-profile zero-drift audit pass. The bounded-worker Desktop suite
+  completed with 8,684 passes, 34 skips, and four timeouts/cascade failures in
+  the single `keys-settings.test.tsx` file; its complete four-test focused run
+  then passed with one worker and a 30-second timeout. Remote publication was
+  completed to Connor's fork and opened upstream as
+  `https://github.com/NousResearch/hermes-agent/pull/98393` on 2026-08-30. The
+  PR remains open; GitHub currently reports no reviews or status-check results.
+  The final clean package was rebuilt from published HEAD, smoke-tested in
+  isolation, installed canonically, reconciled into the managed runtime, and
+  verified through the normal Desktop profile on 2026-08-31.
 - [x] 39. **Codex** — Produce the final readiness report covering versions,
   health, notifications, configured integrations, remaining optional gaps, test
   results, build stamp, installed shortcut/runtime parity, and rollback
@@ -863,36 +1273,19 @@ make the implementation decision.
   shared/Connor-owned publication, CodeRabbit, notification-label confirmation,
   and unread-session decisions.
 
-## Current blockers for Codex-only work
+## Current sequencing and human gates
 
-Codex-only items do not require Connor to design, diagnose, or implement them.
-Some are intentionally sequenced behind shared or Connor-owned gates:
-
-- Item 20a can proceed without Connor and remains independent of optional
-  third-party account setup.
-- PayPal and Hugging Face MCP are no longer blocked. Option 4C account
-  selection, messaging application setup, credentials, and external-service
-  authorization remain shared or Connor-owned in items 24g-24k. Local-model
-  preparation in items 24b and 24d-24e is complete; Connor's subjective
-  quality/noise acceptance remains in item 24f.
-- The one-service-at-a-time decision keeps the local AI model first. Hugging
-  Face MCP follows that service unless its warning blocks current Desktop work;
-  Telegram, WhatsApp, iMessage/BlueBubbles, and other selected messaging
-  platforms follow one at a time under item 24j.
-- The full account/service/device matrix in item 24m must also be executed one
-  integration at a time. Connor handles secure sign-in, consent, device pairing,
-  account-policy choices, and any irreversible control; Codex handles the
-  inventory, adapters, configuration, safe tests, Desktop verification, and
-  non-secret reporting. Raw credentials are never written to tracked files.
-- Clean canonical build preparation can proceed from the completed Desktop
-  validation matrix and item 20a; the removed paid/external diagnostic item is
-  not a release prerequisite.
-- The installed-Desktop switch, runtime repair, installed smoke, notification
-  validation, obsolete-build cleanup, and final readiness report are complete.
-- Item 32 only awaits Connor's confirmation that the implementation-defined
-  core notification set is the four he intended; name a different event to
-  reopen focused validation for it.
-- CodeRabbit remains optional and requires CLI installation/authentication plus
-  consent to transmit the diff.
-- Publishing always remains shared because it changes remote repository state;
-  the 479-commit reconciliation must be rebuilt and reverified before push.
+- Items 40 and 42 must protect state and backups before item 43 rotates any
+  credential, or newly issued credentials could be copied back into the same
+  unsafe locations.
+- Item 41 requires Connor's explicit remote-publication decision because closing,
+  replacing, or rewriting an open PR changes public history. Local preparation
+  and secret-safe review remain Codex work.
+- Items 47-51 and 58 require Connor only for official account consent, provider
+  policy choices, device pairing/power/control, network-exposure choice, or a
+  reboot window. Codex owns the engineering, diagnostics, and evidence.
+- Plaid Production and any other paid-only route remain excluded under Connor's
+  no-real-money policy. Item 25 remains removed and must not be recreated.
+- No open Codex item may be closed from CLI/source evidence alone when the result
+  affects Connor's experience. Each applicable fix must be packaged, installed,
+  relaunched, and verified through the canonical green Desktop and normal profile.

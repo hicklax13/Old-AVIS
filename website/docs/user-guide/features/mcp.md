@@ -108,12 +108,13 @@ The pre-checked rows come from:
    catalog entries pre-prune mutating or rarely-useful tools)
 3. **Everything** if neither applies
 
-Some entries with very large auto-generated surfaces (e.g. `cloudflare`,
-~3,300 OpenAPI endpoint tools) instead declare `tools.default_excluded` — a
-curated block-list of names and glob patterns. Installing one of these skips
-the checklist entirely and writes `tools.exclude`; everything not matched
-stays enabled, including tools the server adds later. Edit
-`mcp_servers.<name>.tools.exclude` in config.yaml to re-enable a family.
+Some legacy entries with very large auto-generated surfaces instead declare
+`tools.default_excluded` — a curated block-list of names and glob patterns.
+Installing one of these skips the checklist entirely and writes
+`tools.exclude`; everything not matched stays enabled, including tools the
+server adds later. Edit `mcp_servers.<name>.tools.exclude` in config.yaml to
+re-enable a family. Providers with a compact progressive-discovery endpoint,
+such as Cloudflare's official Code Mode server, do not need this workaround.
 
 Submit the checklist with ENTER. Only the checked tools end up in
 `mcp_servers.<name>.tools.include`. If you select everything, no filter is
@@ -271,8 +272,9 @@ mcp_servers:
 
 On first connect, Hermes prints an authorize URL, opens your browser when possible, and waits for the OAuth callback on a local loopback port. Tokens are cached at `~/.hermes/mcp-tokens/<server>.json` with 0o600 perms; subsequent runs reuse them silently until refresh fails.
 
-**Remote / headless hosts.** When Hermes runs on a different machine than your browser, the loopback callback can't reach your laptop. Two ways to complete the flow:
+**Remote / headless hosts.** When Hermes runs on a different machine than your browser, the loopback callback can't reach your laptop. Ways to complete the flow:
 
+- **Hermes Desktop (automatic):** when you run the OAuth sign-in from the Desktop app's MCP setup UI against a remote backend, Desktop hosts the callback listener on *your* machine and relays the authorization back to the gateway automatically — no tunnel, paste, or proxy needed. Requires both the Desktop app and the backend to be up to date.
 - **Paste-back (no setup):** on an interactive terminal Hermes prints "Or paste the redirect URL here…" alongside the authorize URL. Open the URL in your browser, approve, copy the full URL the browser ends up on (the redirect will show a connection error — that's expected), paste it at the prompt. Bare `?code=…&state=…` query strings work too.
 - **SSH port forward:** `ssh -N -L <port>:127.0.0.1:<port> user@host` in a separate terminal, then let the redirect flow normally.
 - **Proxied callback (`redirect_uri`):** when a public HTTPS endpoint forwards to the host (e.g. a Tailscale Funnel or reverse proxy pointed at the callback port), set `oauth.redirect_uri` and the browser redirect reaches Hermes on its own — no tunnel or paste needed:
@@ -527,8 +529,11 @@ Only those MCP server tools are registered.
 Entries in `include`/`exclude` may also be glob patterns (`*`, `?`, `[...]`,
 matched case-sensitively): `include: ["*_dns_*"]` registers every tool whose
 name contains `_dns_`. Plain entries without metacharacters stay exact-match.
-Globs are the practical way to filter servers that expose thousands of
-auto-generated endpoint tools by product family.
+Globs are the practical way to filter legacy servers that expose thousands
+of auto-generated endpoint tools by product family. Prefer a provider's
+official progressive-discovery or Code Mode endpoint when one is available;
+Cloudflare's current `https://mcp.cloudflare.com/mcp` endpoint, for example,
+keeps its large OpenAPI schema behind compact `search` and `execute` tools.
 
 ### Blacklist server tools
 
@@ -544,17 +549,17 @@ All server tools are registered except the excluded ones.
 
 ### Glob patterns
 
-Both lists accept fnmatch-style globs alongside exact names — essential for
-huge flat surfaces like Cloudflare's API MCP (`?codemode=false`, ~3,300
-tools) where excluding product areas one endpoint at a time is impractical:
+Both lists accept fnmatch-style globs alongside exact names — useful for a
+legacy flat OpenAPI MCP where excluding product areas one endpoint at a time
+is impractical:
 
 ```yaml
 mcp_servers:
-  cloudflare:
-    url: "https://mcp.cloudflare.com/mcp?codemode=false"
+  legacy-large-api:
+    url: "https://api.example.com/mcp"
     auth: oauth
     tools:
-      exclude: ["*_radar_*", "*_accounts_dlp_*", "*_zones_web3_*"]
+      exclude: ["*_analytics_*", "*_enterprise_*", "*_legacy_*"]
 ```
 
 Entries without glob metacharacters (`*`, `?`, `[`) match exactly — `docs`

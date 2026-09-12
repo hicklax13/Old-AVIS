@@ -38,7 +38,16 @@ import { brandFor } from '@/lib/mcp-brands'
 import { estimateServerTokens, serverUsageCount } from '@/lib/mcp-cost'
 import { completeMcpDesktopOAuth } from '@/lib/mcp-dashboard-oauth'
 import { type McpImportEntry, parseMcpImport } from '@/lib/mcp-import'
-import { NEEDS_AUTH_RE, PROBE_TTL_MS, probeCache, probeKey, serverFingerprint } from '@/lib/mcp-probe-cache'
+import {
+  clearProbePark,
+  NEEDS_AUTH_RE,
+  parkedProbe,
+  PROBE_TTL_MS,
+  probeCache,
+  probeKey,
+  rememberProbe,
+  serverFingerprint
+} from '@/lib/mcp-probe-cache'
 import { getServers, isServerShape, type McpServers, normalizeEntry } from '@/lib/mcp-servers'
 import { countEnabledTools, isToolEnabled, toggleToolInServer } from '@/lib/mcp-tool-filter'
 import { cn } from '@/lib/utils'
@@ -455,6 +464,12 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   )
 
   const descriptionFor = (serverName: string, server: Record<string, unknown>): null | string => {
+    const blockedReason = server.blocked_reason
+
+    if (server.enabled === false && typeof blockedReason === 'string' && blockedReason.trim()) {
+      return blockedReason.trim()
+    }
+
     const lower = serverName.toLowerCase()
 
     const match = catalog.find(
@@ -574,9 +589,14 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
     ready: serverName => blocks.some(block => block.name === serverName)
   })
 
-  const runProbe = async (serverName: string) => {
+  const runProbe = async (serverName: string, manual = false) => {
     const epoch = profileEpoch.current
     const key = probeKey(serverName, servers[serverName], scopeProfileKey)
+
+    if (manual) {
+      clearProbePark(key)
+    }
+
     setProbes(current => ({ ...current, [serverName]: 'probing' }))
 
     try {
@@ -587,7 +607,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
         return
       }
 
-      probeCache.set(key, { at: Date.now(), result })
+      rememberProbe(key, result)
       setProbes(current => ({ ...current, [serverName]: result }))
     } catch (err) {
       if (profileEpoch.current !== epoch) {
@@ -595,7 +615,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
       }
 
       const result = { ok: false, error: err instanceof Error ? err.message : String(err), tools: [] }
-      probeCache.set(key, { at: Date.now(), result })
+      rememberProbe(key, result)
       setProbes(current => ({ ...current, [serverName]: result }))
     }
   }
@@ -627,7 +647,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
       // Cache under the POST-auth fingerprint (auth: oauth) on success — that's
       // the config the mount effect will read back, so it hits this entry.
       const probedConfig = result.ok ? { ...servers[serverName], auth: 'oauth' } : servers[serverName]
-      probeCache.set(probeKey(serverName, probedConfig, scopeProfileKey), { at: Date.now(), result })
+      rememberProbe(probeKey(serverName, probedConfig, scopeProfileKey), result)
 
       if (result.ok) {
         // The endpoint persisted `auth: oauth` — mirror it locally.
@@ -678,9 +698,13 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
         continue
       }
 
-      const cached = probeCache.get(probeKey(serverName, server, scopeProfileKey))
+      const key = probeKey(serverName, server, scopeProfileKey)
+      const parked = parkedProbe(key)
+      const cached = probeCache.get(key)
 
-      if (cached && Date.now() - cached.at < PROBE_TTL_MS) {
+      if (parked) {
+        setProbes(current => ({ ...current, [serverName]: parked }))
+      } else if (cached && Date.now() - cached.at < PROBE_TTL_MS) {
         setProbes(current => ({ ...current, [serverName]: cached.result }))
       } else {
         void runProbe(serverName)
@@ -800,7 +824,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
       }
 
       if (enabled) {
-        void runProbe(serverName)
+        void runProbe(serverName, true)
       }
     } catch (err) {
       notifyError(err, m.saveFailed)
@@ -1051,7 +1075,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
             name={selected}
             onAuthenticate={() => void authenticate(selected)}
             onBack={() => setCursor(0)}
-            onProbe={() => void runProbe(selected)}
+            onProbe={() => void runProbe(selected, true)}
             onRemove={() => void removeServer(selected)}
             onToggle={checked => void setServerEnabled(selected, checked)}
             onToggleTool={toolName => void toggleTool(selected, toolName)}
@@ -1099,7 +1123,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
                         enabled={serverEnabled(server)}
                         key={serverName}
                         name={serverName}
-                        onProbe={() => void runProbe(serverName)}
+                        onProbe={() => void runProbe(serverName, true)}
                         onRemove={() => void removeServer(serverName)}
                         onSelect={() => focusServer(serverName)}
                         onToggle={checked => void setServerEnabled(serverName, checked)}

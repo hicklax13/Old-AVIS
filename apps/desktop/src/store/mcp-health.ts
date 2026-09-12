@@ -14,7 +14,8 @@
 
 import { getHermesConfigRecord, type McpTestResult, testMcpServer } from '@/hermes'
 import { translateNow } from '@/i18n'
-import { classifyProbe, freshProbe, probeCache, probeKey } from '@/lib/mcp-probe-cache'
+import { classifyProbe, freshProbe, parkedProbe, probeKey, rememberProbe } from '@/lib/mcp-probe-cache'
+import { getServers } from '@/lib/mcp-servers'
 import { notify } from '@/store/notifications'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { $gatewayState } from '@/store/session'
@@ -106,10 +107,9 @@ async function sweep(): Promise<void> {
     return
   }
 
-  const raw = config.mcp_servers
-
-  const servers =
-    raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, Record<string, unknown>>) : {}
+  // getServers drops non-object entries (a bare `name:` in config.yaml parses
+  // as `null`), so isUrlServer below never reads `.url` off a null entry.
+  const servers = getServers(config)
 
   for (const [name, server] of Object.entries(servers)) {
     if (!isUrlServer(server)) {
@@ -122,7 +122,10 @@ async function sweep(): Promise<void> {
     }
 
     const key = probeKey(name, server, profileKey)
-    let result = freshProbe(key)
+    // Terminal failures are sticky for this app session and exact connection
+    // fingerprint. Config/profile changes produce a new key; manual Test/Auth
+    // updates the same key. A timer tick alone never reopens the failure path.
+    let result = parkedProbe(key) ?? freshProbe(key)
 
     if (!result) {
       try {
@@ -135,7 +138,7 @@ async function sweep(): Promise<void> {
         return
       }
 
-      probeCache.set(key, { at: Date.now(), result })
+      rememberProbe(key, result)
     }
 
     recordResult(profileKey, name, classifyProbe(result))

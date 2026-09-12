@@ -30,10 +30,22 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from agent.skill_utils import is_excluded_skill_path
+from hermes_cli.archive_safe import (
+    archive_root_dirs,
+    make_targz,
+    normalize_archive_parts,
+    safe_extract_targz,
+)
+from hermes_constants import (
+    clear_named_profile_deleted,
+    mark_named_profile_deleted,
+    named_profile_is_deleted,
+)
+from hermes_security import secure_private_directory, secure_private_path
 
 logger = logging.getLogger(__name__)
 
@@ -380,11 +392,12 @@ def get_profile_dir(name: str) -> Path:
 
 
 def profile_exists(name: str) -> bool:
-    """Check whether a profile directory exists."""
+    """Check whether a live (non-tombstoned) profile directory exists."""
     canon = normalize_profile_name(name)
     if canon == "default":
         return True
-    return get_profile_dir(canon).is_dir()
+    profile_dir = get_profile_dir(canon)
+    return profile_dir.is_dir() and not named_profile_is_deleted(profile_dir)
 
 
 def profile_matches_home(name: str, home: "Path | None" = None) -> bool:
@@ -758,6 +771,41 @@ def _read_config_model(profile_dir: Path) -> tuple:
         return None, None
 
 
+def _seed_model_config(profile_dir: Path) -> None:
+    """Give a profile created without a clone source a usable model block.
+
+    Such a profile gets its directory tree but no ``config.yaml`` at all, so it
+    resolves no provider and its first turn dies with "No LLM provider
+    configured" — created, but unable to run. Copy the active profile's
+    ``model`` block over at creation time.
+
+    This is a copy, not a link: profiles remain independent islands, and
+    editing either one afterwards never touches the other. "Fresh" means fresh
+    skills and SOUL, not unreachable.
+    """
+    config_path = profile_dir / "config.yaml"
+    if config_path.exists():
+        return
+    try:
+        import yaml
+        from hermes_constants import get_hermes_home
+        from hermes_cli.config import read_user_config_raw
+
+        source = get_hermes_home() / "config.yaml"
+        if not source.is_file():
+            return
+        model_cfg = read_user_config_raw(source).get("model")
+        if not model_cfg:
+            return
+        config_path.write_text(
+            yaml.safe_dump({"model": model_cfg}, sort_keys=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        # Creation must not fail over this; `hermes model` still sets it later.
+        pass
+
+
 def _check_gateway_running(profile_dir: Path) -> bool:
     """Check if a gateway is running for a given profile directory.
 
@@ -1022,6 +1070,8 @@ def list_profiles() -> List[ProfileInfo]:
                 continue  # already added as the built-in default above
             if not _PROFILE_ID_RE.match(name):
                 continue
+            if named_profile_is_deleted(entry):
+                continue
             model, provider = _read_config_model(entry)
             alias_name = alias_map.get(normalize_profile_name(name))
             if alias_name:
@@ -1107,6 +1157,8 @@ def profiles_to_serve(
                 continue  # default is the built-in entry already added above
             if not _PROFILE_ID_RE.match(name):
                 continue
+            if named_profile_is_deleted(entry):
+                continue
             if allowed is not None and name not in allowed:
                 continue
             serve.append((name, entry))
@@ -1173,8 +1225,15 @@ def create_profile(
         )
 
     profile_dir = get_profile_dir(canon)
+    if profile_dir.exists() and named_profile_is_deleted(profile_dir):
+        # Empty shells left by post-delete mkdir may be replaced. Identity
+        # files mean the leftover is not a shell — fail closed, no rmtree.
+        if (profile_dir / "config.yaml").exists() or (profile_dir / ".env").exists():
+            raise FileExistsError(f"Profile '{canon}' already exists at {profile_dir}")
+        shutil.rmtree(profile_dir)
     if profile_dir.exists():
         raise FileExistsError(f"Profile '{canon}' already exists at {profile_dir}")
+    clear_named_profile_deleted(profile_dir)
 
     # Resolve clone source
     source_dir = None
@@ -1192,6 +1251,9 @@ def create_profile(
                 f"Source profile '{clone_from or 'active'}' does not exist at {source_dir}"
             )
 
+    # The profile root is a credential/state boundary. Protect its parent
+    # before copytree/mkdir can create children with inherited broad access.
+    secure_private_directory(profile_dir.parent)
     if clone_all and source_dir:
         # Full copy of source profile (exclude sibling ~/.hermes/profiles/)
         shutil.copytree(
@@ -1205,9 +1267,12 @@ def create_profile(
             (profile_dir / stale).unlink(missing_ok=True)
     else:
         # Bootstrap directory structure
-        profile_dir.mkdir(parents=True, exist_ok=True)
+        secure_private_directory(profile_dir)
         for subdir in _PROFILE_DIRS:
             (profile_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+        if source_dir is None:
+            _seed_model_config(profile_dir)
 
         # Clone config files from source
         if source_dir is not None:
@@ -1260,6 +1325,11 @@ def create_profile(
             os.chmod(str(env_path), 0o600)
         except OSError:
             pass  # best-effort — save_env_value creates the file on demand
+    if env_path.exists():
+        # The profile root protects inherited children, but .env is also an
+        # independently copied/published credential file. Give it its own
+        # protected read-back boundary so a later move cannot weaken it.
+        secure_private_path(env_path, directory=False)
 
     # Seed a default SOUL.md so the user has a file to customize immediately.
     # Skipped when the profile already has one (from --clone / --clone-all).
@@ -1313,6 +1383,7 @@ def create_profile(
     # unit-generation paths handle gateway lifecycle.
     _maybe_register_gateway_service(canon)
 
+    secure_private_path(profile_dir, directory=True, recursive=True)
     return profile_dir
 
 
@@ -1385,6 +1456,8 @@ def backfill_profile_envs(quiet: bool = False) -> List[str]:
             continue
         if entry.name == "default":
             continue
+        if named_profile_is_deleted(entry):
+            continue
         env_path = entry / ".env"
         if env_path.exists():
             continue
@@ -1399,6 +1472,7 @@ def backfill_profile_envs(quiet: bool = False) -> List[str]:
                     encoding="utf-8",
                 )
             os.chmod(str(env_path), 0o600)
+            secure_private_path(env_path, directory=False)
             backfilled.append(entry.name)
         except OSError as e:
             if not quiet:
@@ -1702,6 +1776,10 @@ def delete_profile(name: str, yes: bool = False) -> Path:
     # the rmtree below fail with ENOTEMPTY and — before the ensure_hermes_home
     # guard — resurrected the deleted tree.
     _stop_profile_backends(canon, profile_dir)
+
+    # Tombstone before rmtree so a stale serve/logging mkdir cannot relist
+    # this name as a live profile.
+    mark_named_profile_deleted(profile_dir)
 
     # 2c. Release this process's holographic memory-store connections into
     # the profile. The Desktop's *main* serve process opens memory_store.db
@@ -2073,23 +2151,6 @@ def _default_export_ignore(root_dir: Path):
     return _ignore
 
 
-def _make_profile_archive(base: str, root_dir: str, base_dir: str) -> str:
-    """Create ``<base>.tar.gz`` of ``root_dir/base_dir`` — GNU tar format.
-
-    Not :func:`shutil.make_archive`: that writes PAX (Python's tarfile default
-    since 3.8), whose fractional-mtime records macOS Archive Utility rejects —
-    double-clicking an exported profile threw "Error 94 - Bad message." GNU
-    format keeps long paths working (longlink extensions) and stays integer-
-    mtime, so Finder, bsdtar, and gnutar all extract it.
-    """
-    import tarfile
-
-    archive_path = f"{base}.tar.gz"
-    with tarfile.open(archive_path, "w:gz", format=tarfile.GNU_FORMAT) as tf:
-        tf.add(str(Path(root_dir) / base_dir), arcname=base_dir)
-    return archive_path
-
-
 # Text / config suffixes walked during export secret scrubbing. Binary DBs,
 # images, and other non-text artifacts are left alone (they may still leave
 # via named-profile export — scrubbing those is a separate concern).
@@ -2188,7 +2249,7 @@ def export_profile(name: str, output_path: str, extra_files: Optional[Dict[str, 
 
     def _stage_extras(staged: Path) -> None:
         for rel, content in (extra_files or {}).items():
-            parts = _normalize_profile_archive_parts(rel)
+            parts = normalize_archive_parts(rel)
             target = staged.joinpath(*parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
@@ -2207,7 +2268,7 @@ def export_profile(name: str, output_path: str, extra_files: Optional[Dict[str, 
             )
             _stage_extras(staged)
             _scrub_export_secrets(staged)
-            result = _make_profile_archive(base, tmpdir, "default")
+            result = make_targz(base, tmpdir, "default")
             return Path(result)
 
     # Named profiles — stage a filtered copy to exclude credentials
@@ -2222,85 +2283,8 @@ def export_profile(name: str, output_path: str, extra_files: Optional[Dict[str, 
         )
         _stage_extras(staged)
         _scrub_export_secrets(staged)
-        result = _make_profile_archive(base, tmpdir, canon)
+        result = make_targz(base, tmpdir, canon)
         return Path(result)
-
-
-def _normalize_profile_archive_parts(member_name: str) -> List[str]:
-    """Return safe path parts for a profile archive member."""
-    normalized_name = member_name.replace("\\", "/")
-    posix_path = PurePosixPath(normalized_name)
-    windows_path = PureWindowsPath(member_name)
-
-    if (
-        not normalized_name
-        or posix_path.is_absolute()
-        or windows_path.is_absolute()
-        or windows_path.drive
-    ):
-        raise ValueError(f"Unsafe archive member path: {member_name}")
-
-    parts = [part for part in posix_path.parts if part not in {"", "."}]
-    if not parts or any(part == ".." for part in parts):
-        raise ValueError(f"Unsafe archive member path: {member_name}")
-    return parts
-
-
-def _safe_extract_profile_archive(archive: Path, destination: Path) -> None:
-    """Extract a profile archive without allowing path escapes or links."""
-    import tarfile
-
-    with tarfile.open(archive, "r:gz") as tf:
-        for member in tf.getmembers():
-            parts = _normalize_profile_archive_parts(member.name)
-            target = destination.joinpath(*parts)
-
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-
-            if not member.isfile():
-                raise ValueError(
-                    f"Unsupported archive member type: {member.name}"
-                )
-
-            target.parent.mkdir(parents=True, exist_ok=True)
-            extracted = tf.extractfile(member)
-            if extracted is None:
-                raise ValueError(f"Cannot read archive member: {member.name}")
-
-            with extracted, open(target, "wb") as dst:
-                shutil.copyfileobj(extracted, dst)
-
-            try:
-                os.chmod(target, member.mode & 0o777)
-            except OSError:
-                pass
-
-
-def _inspect_profile_archive_roots(archive: Path) -> set[str]:
-    """Return the archive's top-level directory names.
-
-    Profile imports expect exactly one root directory. Inspecting the archive
-    before extraction lets us stage the import safely instead of mutating a
-    live profile tree first and reconciling names later.
-    """
-    import tarfile
-
-    with tarfile.open(archive, "r:gz") as tf:
-        top_dirs = {
-            parts[0]
-            for member in tf.getmembers()
-            for parts in [_normalize_profile_archive_parts(member.name)]
-            if len(parts) > 1 or member.isdir()
-        }
-        if not top_dirs:
-            top_dirs = {
-                _normalize_profile_archive_parts(member.name)[0]
-                for member in tf.getmembers()
-                if member.isdir()
-            }
-    return top_dirs
 
 
 def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
@@ -2315,7 +2299,7 @@ def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
     if not archive.exists():
         raise FileNotFoundError(f"Archive not found: {archive}")
 
-    top_dirs = _inspect_profile_archive_roots(archive)
+    top_dirs = archive_root_dirs(archive)
     archive_root = top_dirs.pop() if len(top_dirs) == 1 else None
     inferred_name = name or archive_root
     if not inferred_name:
@@ -2344,11 +2328,11 @@ def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
         raise FileExistsError(f"Profile '{canon}' already exists at {profile_dir}")
 
     profiles_root = _get_profiles_root()
-    profiles_root.mkdir(parents=True, exist_ok=True)
+    secure_private_directory(profiles_root)
 
     with tempfile.TemporaryDirectory(prefix="hermes_profile_import_") as tmpdir:
         staging_root = Path(tmpdir)
-        _safe_extract_profile_archive(archive, staging_root)
+        safe_extract_targz(archive, staging_root)
 
         extracted = staging_root / archive_root
         if not extracted.is_dir():
@@ -2363,6 +2347,10 @@ def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
 
         shutil.move(str(final_source), str(profile_dir))
 
+    # A same-volume move can preserve explicit/inherited ACLs from the broad
+    # temporary extraction directory. Normalize and read back the complete
+    # imported profile, not only its new root.
+    secure_private_path(profile_dir, directory=True, recursive=True)
     return profile_dir
 
 
@@ -2528,7 +2516,7 @@ def resolve_profile_env(profile_name: str) -> str:
         return str(root)
     profile_dir = root / "profiles" / canon
 
-    if not profile_dir.is_dir():
+    if not profile_dir.is_dir() or named_profile_is_deleted(profile_dir):
         raise FileNotFoundError(
             f"Profile '{canon}' does not exist. "
             f"Create it with: hermes profile create {canon}"

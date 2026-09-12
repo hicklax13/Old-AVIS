@@ -151,6 +151,10 @@ class CatalogEntry:
     source: str
     transport: TransportSpec
     auth: AuthSpec
+    # Optional runtime trust tier written verbatim to mcp_servers.<name>.
+    # ``untrusted`` routes tools without readOnlyHint=true through the normal
+    # approval surface; omission preserves the MCP config's full-trust default.
+    trust: Optional[str] = None
     tools: ToolsSpec = field(default_factory=ToolsSpec)
     install: Optional[InstallSpec] = None
     post_install: str = ""
@@ -261,6 +265,17 @@ def _parse_manifest(path: Path) -> CatalogEntry:
         scopes=list(auth_raw.get("scopes") or []),
         env_var=auth_raw.get("env_var"),
     )
+
+    trust_raw = data.get("trust")
+    trust: Optional[str] = None
+    if trust_raw is not None:
+        if not isinstance(trust_raw, str) or trust_raw.strip().lower() not in {
+            "full", "untrusted",
+        }:
+            raise CatalogError(
+                f"{path}: trust must be 'full' or 'untrusted'"
+            )
+        trust = trust_raw.strip().lower()
     if t_type == "http" and a_type == "api_key":
         # _build_server_config emits an Authorization header referencing
         # ${MCP_<NAME>_API_KEY} (via _bearer_auth_headers), but install_entry
@@ -363,6 +378,7 @@ def _parse_manifest(path: Path) -> CatalogEntry:
         source=source,
         transport=transport,
         auth=auth,
+        trust=trust,
         tools=tools_spec,
         install=install,
         post_install=str(data.get("post_install") or ""),
@@ -602,6 +618,8 @@ def _build_server_config(
             from hermes_cli.mcp_config import _bearer_auth_headers
 
             cfg["headers"] = _bearer_auth_headers(entry.name)
+    if entry.trust is not None:
+        cfg["trust"] = entry.trust
     return cfg
 
 

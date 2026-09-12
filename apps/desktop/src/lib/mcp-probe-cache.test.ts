@@ -2,7 +2,18 @@ import { describe, expect, it } from 'vitest'
 
 import type { McpTestResult } from '@/hermes'
 
-import { classifyProbe, freshProbe, NEEDS_AUTH_RE, PROBE_TTL_MS, probeCache, probeKey } from './mcp-probe-cache'
+import {
+  classifyProbe,
+  clearProbePark,
+  freshProbe,
+  isTerminalProbeFailure,
+  NEEDS_AUTH_RE,
+  parkedProbe,
+  PROBE_TTL_MS,
+  probeCache,
+  probeKey,
+  rememberProbe
+} from './mcp-probe-cache'
 
 const result = (over: Partial<McpTestResult> = {}): McpTestResult => ({ ok: true, tools: [], ...over })
 
@@ -37,6 +48,7 @@ describe('probeKey', () => {
     expect(probeKey('github', server, 'default')).not.toBe(
       probeKey('github', { url: 'https://other.example/mcp' }, 'default')
     )
+    expect(probeKey('github', server, 'default')).not.toBe(probeKey('github', { ...server, enabled: false }, 'default'))
   })
 
   it('ignores non-connection fields so cosmetic edits still hit the cache', () => {
@@ -55,6 +67,36 @@ describe('freshProbe', () => {
     expect(freshProbe(key, 1_000 + PROBE_TTL_MS)).toBeNull()
     expect(freshProbe('missing', 0)).toBeNull()
     probeCache.delete(key)
+  })
+})
+
+describe('terminal probe parking', () => {
+  const key = probeKey('terminal', { url: 'https://x' }, 'default')
+
+  it('keeps terminal failures parked after the ordinary cache TTL', () => {
+    const failed = result({ ok: false, error: 'OAuth authentication required', retryable: false })
+    rememberProbe(key, failed, 1_000)
+
+    expect(freshProbe(key, 1_000 + PROBE_TTL_MS)).toBeNull()
+    expect(parkedProbe(key)).toBe(failed)
+
+    clearProbePark(key)
+    expect(parkedProbe(key)).toBeNull()
+    probeCache.delete(key)
+  })
+
+  it('does not park transient failures and clears a park on success', () => {
+    const retryable = result({ ok: false, error: 'connection refused', retryable: true })
+    rememberProbe(key, retryable, 1_000)
+    expect(parkedProbe(key)).toBeNull()
+
+    rememberProbe(key, result(), 2_000)
+    expect(parkedProbe(key)).toBeNull()
+    probeCache.delete(key)
+  })
+
+  it('treats needs-auth from an older backend as terminal', () => {
+    expect(isTerminalProbeFailure(result({ ok: false, error: 'OAuth authorization required' }))).toBe(true)
   })
 })
 

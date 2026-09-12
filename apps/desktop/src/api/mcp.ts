@@ -5,6 +5,9 @@ import { capabilityScoped, hermesApi, type ProfileScope, profileScoped } from '.
 export interface McpTestResult {
   ok: boolean
   error?: string
+  /** False means retries cannot help until config, credentials, or a user
+   * action changes. Absent on older backends. */
+  retryable?: boolean
   /** `schema_chars` (converted registry-schema size, chars) is additive —
    *  older backends omit it and the cost overlay shows no token estimate. */
   tools: { name: string; description: string; schema_chars?: number }[]

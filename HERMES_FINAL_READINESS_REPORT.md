@@ -1,6 +1,6 @@
 # Hermes Desktop final readiness report
 
-Verified 2026-08-30 on Connor's ASUS Windows 11 laptop. This report covers the
+Verified through 2026-08-31 on Connor's ASUS Windows 11 laptop. This report covers the
 local delivered system. It does not claim that unpublished commits are on the
 upstream repository.
 
@@ -13,45 +13,53 @@ Windows shortcuts still target it, the normal-profile gateway reconnects after
 a pinned-shortcut launch, and no test `electron.exe` remains. No Codex-owned
 runtime or notification defect is open.
 
-Remote publication is intentionally not complete. Connor must explicitly
-authorize pushing/opening a PR, and the local line must first be reconciled
-with the 479 newer commits on `origin/main`. Optional CodeRabbit review also
-remains outside the delivered result because its CLI is not installed or
-authenticated and running it sends code diffs to CodeRabbit.
+Connor authorized remote publication. The signed local line was rebased onto
+`origin/main`, published to Connor's fork, and opened upstream as PR
+`https://github.com/NousResearch/hermes-agent/pull/98393`. The final published
+implementation commit was rebuilt, smoke-tested, installed, reconciled into the
+managed runtime, and verified through the canonical green app's normal profile.
+The PR remains open and currently has no review or status-check result; that
+external state is not represented as merged.
 
 ## Installed Desktop and runtime
 
 - Desktop package version: `0.17.0`; Electron: `40.10.2`.
 - Clean build stamp: commit
-  `0bae5382b0653ba2a6f69830dcc025fddcbf45d3`, branch `main`, built
-  `2026-08-30T04:27:27.837Z`, `dirty: false`.
+  `35c44b1db1ee6ca844032556bc71d09f05a111c4`, branch
+  `codex/hermes-desktop-readiness`, built `2026-08-30T06:18:02.186Z`,
+  `dirty: false`.
 - Installed executable SHA-256:
-  `beff8d7d5cd4d9d17853da61096da07f994680e6953514249ffc481814c5bbd1`.
+  `2d4d422e278de78c7622c5ded9b3e09b86e2df21625b1f6c96e273086ca5880d`.
 - Taskbar and Start Menu shortcuts resolve to the canonical executable and use
   its `win-unpacked` directory as the working directory.
 - The live root process was relaunched through the pinned shortcut after final
-  testing. The `google-school` backend accepted two renderer WebSocket peers at
-  01:13:59 local time and started the eight-profile cron scheduler normally.
+  testing. Its root command line has no temporary inspection flag, its child
+  processes use `C:\Users\conno\AppData\Roaming\Hermes`, and zero test
+  `electron.exe` processes remain.
 - The managed backend base reports Hermes `v0.20.6`, commit `ecc9fe03046`, with
   Connor's local managed overlay. A post-switch parity audit compared all 17
-  production overlay files with the signed source: 17 matched, zero differed.
-  Five stale managed files found during the first audit were backed up, replaced
-  atomically, compiled, and reverified before the final restart.
+  production overlay files with the signed post-rebase source: 17 matched, zero
+  differed. Nine pre-rebase managed files were backed up, replaced
+  transactionally, syntax-compiled, and reverified before the final restart.
 
 ## Fresh installed-package proof
 
-A hidden, isolated test launched the installed canonical executable against the
-real managed Python gateway and a local mock inference endpoint. It submitted a
-real session, rendered three interim assistant messages, executed four safe
-`todo` tool calls, and rendered the final answer. The bridge, renderer, gateway,
-mock request, and tool loop all passed in 23.6 seconds without using an external
-model, account credential, or paid service.
+The final package first passed hidden isolated fake-boot and real-backend smoke
+tests. After installation, a direct live-renderer probe attached to the exact
+canonical executable and normal profile. It observed the populated Hermes
+renderer and Desktop bridge, obtained a protected loopback gateway URL without
+recording its token, returned `setup.status`, listed all eight profiles, and
+accepted all four native-notification classes. The temporary local inspection
+launch was then closed gracefully and replaced by a clean pinned-shortcut
+launch; the final process audit found no debugging flag and no test Electron.
 
 Evidence:
 
-- `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830\item31-installed-smoke.json`
-- `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830\item31-installed-smoke.png`
-- `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830\deployment-report.json`
+- `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\deployment-report.json`
+- `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\managed-runtime-sync.json`
+- `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\installed-live-smoke.json`
+- `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\installed-live-smoke.png`
+- `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\final-readback.json`
 
 ## Native notification matrix
 
@@ -66,14 +74,14 @@ The implementation-defined four core chat notifications are:
 
 All four kinds are enabled by default, respect the master/per-kind preferences,
 ignore the post-connect replay baseline, and deduplicate repeated events in the
-renderer and Electron main process. The installed canonical notification bridge
-accepted one silent test of each exact title from a hidden packaged instance.
+renderer and Electron main process. The final installed canonical notification
+bridge accepted one live test of each exact title through the normal profile.
 The focused renderer and gateway-event suite passed 158 tests across 23 files.
 No defect was reproduced, so no notification fix was necessary.
 
 Evidence:
 
-- `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830\item33-installed-notifications.json`
+- `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\installed-live-smoke.json`
 
 If Connor intended a different set of four events, item 32 should be reopened
 with those exact titles; the four above are the core set defined by the current
@@ -122,24 +130,36 @@ the normal default.
   unsupported control integration.
 - Microsoft Graph personal delegated access is not a ready Hermes connector;
   iCloud on Windows is limited, and Xbox control is classified unsupported.
-- Connor still owns the decision to preserve or mark read the six unread
-  sessions.
-- CodeRabbit is optional and pending CLI installation, authentication, and
-  explicit consent to upload the diff for review.
-- Pushing and opening a PR remain pending Connor's explicit authorization.
+- The six unread sessions were preserved; no read state was changed.
+- CodeRabbit CLI 0.7.5 is installed and authenticated in both supported WSL and
+  signed native Windows modes. Every doctor check passes, but its no-cost review
+  endpoint closed the WebSocket before analysis in full, light, agent, and
+  plain modes. Usage remained zero, no findings were returned, and paid credits
+  were not enabled.
+- The signed branch is published to Connor's fork and upstream PR
+  `https://github.com/NousResearch/hermes-agent/pull/98393` is open.
 
 ## Verification summary
 
-- Pre-build affected Python suite: 1,285 passed, five skipped.
-- Pre-build Desktop Vitest suite: 7,998 passed, 34 skipped.
-- Desktop plugin suite: 625 passed.
+- Post-rebase affected Python suite: 1,293 passed, five skipped.
+- Post-rebase Desktop Vitest suite: 8,675 passed, 34 skipped in the initial
+  saturated run; all 13 timed-out/environment-dependent cases passed in focused
+  reruns. The bounded-worker full rerun then recorded 8,684 passed and 34
+  skipped, with its only four failures confined to the same timing-sensitive
+  `keys-settings.test.tsx` file. That complete file passed 4/4 immediately in a
+  one-worker focused rerun with a 30-second timeout (its slow test took 13.1s,
+  inside that limit but near the full suite's 15-second default).
 - TypeScript typecheck, ESLint, Python compilation, `git diff --check`, secret
   shape scan, and all-profile capability read-back passed before packaging.
 - Packaged candidate fake-boot and real-backend hidden smoke tests passed.
 - Fresh post-install notification/session suite: 158 passed.
 - Fresh hidden installed chat/tool smoke: one passed.
 - Fresh hidden installed native-notification smoke: one passed.
-- Final process audit: canonical `Hermes.exe` relaunched; zero `electron.exe`.
+- Final published-package live smoke: renderer, bridge, `setup.status`, eight
+  profiles, and four notification kinds passed.
+- Final process audit: canonical `Hermes.exe` relaunched from the pinned
+  shortcut with the normal profile, no inspection flag, and zero
+  `electron.exe`.
 
 ## Cleanup and rollback
 
@@ -151,28 +171,29 @@ did not touch the canonical package or any current rollback material.
 Recovery material:
 
 - Pre-switch installed package and shortcuts:
-  `C:\Dev\hermes-agent-recovery\installed-backup-pre-0bae5382-20260830`
+  `C:\Dev\hermes-agent-recovery\installed-backup-pre-35c44b1d-20260830`
 - Exact guarded rollback script:
-  `C:\Dev\hermes-agent-recovery\installed-backup-pre-0bae5382-20260830\restore-installed.ps1`
+  `C:\Dev\hermes-agent-recovery\installed-backup-pre-35c44b1d-20260830\restore-installed.ps1`
 - Deployment's intact pre-switch package:
-  `C:\Dev\hermes-agent-recovery\deploy-0bae5382-20260830\pre-switch-win-unpacked`
+  `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\pre-switch-win-unpacked`
 - Pre-repair managed runtime files:
-  `C:\Dev\hermes-agent\.hermes\backups\managed-runtime-item31-20260830T0058`
+  `C:\Dev\hermes-agent-recovery\deploy-35c44b1d-20260830\managed-runtime-pre-rebase-sync`
 
 The package switch and managed-runtime repair both completed through graceful
 window closure; neither required a forced process stop.
 
 ## Publication readiness
 
-After a fresh fetch, local `main` is eleven signed commits ahead and 479 commits
-behind `origin/main`. Every local commit reports a good SSH signature. A
-read-only merge-tree rehearsal identified six conflicts before publication:
-
-- Four modify/delete conflicts under the upstream-removed
-  `apps/desktop/src/plugins/hermes-bots/` tree.
-- Content conflicts in `tools/mcp_oauth_manager.py` and
-  `tests/tools/test_mcp_oauth_bidirectional.py`.
-
-No push, PR, rebase, or remote mutation has been performed. Reconciliation
-must be followed by the relevant tests and a new clean Desktop build before the
-rebased result can replace this locally verified package.
+The prior line is recoverable from
+`codex/hermes-desktop-readiness-pre-rebase-20260830`. The active
+`codex/hermes-desktop-readiness` branch was rebased with commit signing onto
+`origin/main` at `26350357d76e4508c8df9304a3374bdc5a6f6220`. Every local commit
+reports a good SSH signature. The four upstream-deleted Hermes Bots files
+remained deleted, while
+the OAuth conflict resolution preserves upstream's serialized resource lock,
+the explicit interactive-authorization path, and both regression test classes.
+A fresh merge-tree rehearsal is conflict-free. Publication, the published-HEAD
+package, the canonical switch, the managed-runtime reconciliation, and the
+normal-profile live smoke are complete. PR review and merge are the only
+remaining external publication states; neither is required to use the verified
+local Desktop installation.

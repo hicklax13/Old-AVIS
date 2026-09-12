@@ -107,6 +107,29 @@ class TestProfileScopedEnv:
 
 class TestProfileScopedMcp:
 
+    def test_mcp_list_preserves_reason_for_intentionally_disabled_server(
+        self, client, isolated_profiles
+    ):
+        (isolated_profiles["worker_beta"] / "config.yaml").write_text(
+            "mcp_servers:\n"
+            "  figma:\n"
+            "    url: https://mcp.figma.com/mcp\n"
+            "    auth: oauth\n"
+            "    enabled: false\n"
+            "    blocked_reason: Official client approval required.\n",
+            encoding="utf-8",
+        )
+
+        response = client.get(
+            "/api/mcp/servers", params={"profile": "worker_beta"}
+        )
+
+        assert response.status_code == 200
+        [server] = response.json()["servers"]
+        assert server["name"] == "figma"
+        assert server["enabled"] is False
+        assert server["blocked_reason"] == "Official client approval required."
+
     def test_mcp_bearer_secret_is_profile_scoped(self, client, isolated_profiles):
         secret = "worker-only-secret"
         response = client.post(
@@ -137,18 +160,16 @@ class TestProfileScopedMcp:
         self, client, isolated_profiles, monkeypatch
     ):
         """An `auth: oauth` server that serves tools/list anonymously must not
-        false-green: a successful probe with no token on disk reports needs-auth."""
+        false-green or start OAuth: missing state short-circuits before probe."""
         import hermes_cli.mcp_config as mcp_config
+        from unittest.mock import MagicMock
 
         (isolated_profiles["worker_beta"] / "config.yaml").write_text(
             "mcp_servers:\n  oauth-srv:\n    url: http://x/sse\n    auth: oauth\n",
             encoding="utf-8",
         )
-        monkeypatch.setattr(
-            mcp_config,
-            "_probe_single_server",
-            lambda name, config, connect_timeout=30, details=None: [("tool-a", "desc")],
-        )
+        probe = MagicMock(return_value=[("tool-a", "desc")])
+        monkeypatch.setattr(mcp_config, "_probe_single_server", probe)
         monkeypatch.setattr(mcp_config, "_oauth_tokens_present", lambda name: False)
 
         resp = client.post(
@@ -158,6 +179,8 @@ class TestProfileScopedMcp:
         body = resp.json()
         assert body["ok"] is False
         assert "oauth" in body["error"].lower()
+        assert body["retryable"] is False
+        probe.assert_not_called()
 
         # With a token present, the same probe is genuinely authenticated.
         monkeypatch.setattr(mcp_config, "_oauth_tokens_present", lambda name: True)
@@ -165,6 +188,29 @@ class TestProfileScopedMcp:
             "/api/mcp/servers/oauth-srv/test", params={"profile": "worker_beta"}
         )
         assert resp.json()["ok"] is True
+        probe.assert_called_once()
+
+    def test_mcp_test_classifies_transient_probe_failure_as_retryable(
+        self, client, isolated_profiles, monkeypatch
+    ):
+        import hermes_cli.mcp_config as mcp_config
+
+        (isolated_profiles["worker_beta"] / "config.yaml").write_text(
+            "mcp_servers:\n  offline:\n    url: http://x/mcp\n",
+            encoding="utf-8",
+        )
+
+        def failed_probe(*_args, **_kwargs):
+            raise ConnectionError("connection refused")
+
+        monkeypatch.setattr(mcp_config, "_probe_single_server", failed_probe)
+
+        body = client.post(
+            "/api/mcp/servers/offline/test", params={"profile": "worker_beta"}
+        ).json()
+
+        assert body["ok"] is False
+        assert body["retryable"] is True
 
     def test_mcp_test_reports_optional_schema_chars(
         self, client, isolated_profiles, monkeypatch

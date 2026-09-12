@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from tools.homeassistant_tool import (
+    _ASYNC_BRIDGE_TIMEOUT_SECONDS,
     _check_ha_available,
     _filter_and_summarize,
     _build_service_payload,
@@ -20,6 +21,8 @@ from tools.homeassistant_tool import (
     _BLOCKED_DOMAINS,
     _ENTITY_ID_RE,
     _SERVICE_NAME_RE,
+    _SERVICE_CALL_TIMEOUT_SECONDS,
+    _async_call_service,
 )
 
 
@@ -218,6 +221,7 @@ class TestCallServiceStringData:
         })
         call_args = mock_run.call_args[0][0]  # the coroutine arg
         # _run_async was called, meaning we got past validation
+        call_args.close()
 
 
     @patch("tools.homeassistant_tool._run_async", return_value={"success": True})
@@ -230,6 +234,58 @@ class TestCallServiceStringData:
             "data": "   ",
         })
         mock_run.assert_called_once()
+        mock_run.call_args[0][0].close()
+
+
+class TestServiceCallTimeout:
+    @pytest.mark.asyncio
+    async def test_slow_physical_device_action_has_sufficient_http_window(
+        self, monkeypatch
+    ):
+        """A valid 31+ second HA action must not be reported as a timeout."""
+        observed = {}
+
+        class FakeResponse:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def raise_for_status(self):
+                return None
+
+            async def json(self):
+                return []
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, *, headers, json, timeout):
+                observed["total"] = timeout.total
+                return FakeResponse()
+
+        monkeypatch.setattr("aiohttp.ClientSession", FakeSession)
+        monkeypatch.setattr(
+            "tools.homeassistant_tool._get_config",
+            lambda: ("http://home-assistant.invalid", "test-token"),
+        )
+
+        result = await _async_call_service(
+            "media_player",
+            "turn_off",
+            "media_player.samsung_tv",
+        )
+
+        assert result["success"] is True
+        assert observed["total"] > 31.55
+
+    def test_async_bridge_outlives_service_http_timeout(self):
+        assert _ASYNC_BRIDGE_TIMEOUT_SECONDS > _SERVICE_CALL_TIMEOUT_SECONDS
 
 
 # ---------------------------------------------------------------------------

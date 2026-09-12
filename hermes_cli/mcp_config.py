@@ -276,12 +276,21 @@ def _resolve_mcp_server_config(config: dict) -> dict:
 
 
 def _probe_single_server(
-    name: str, config: dict, connect_timeout: Optional[float] = None, *, details: Optional[dict] = None
+    name: str,
+    config: dict,
+    connect_timeout: Optional[float] = None,
+    *,
+    details: Optional[dict] = None,
+    allow_interactive_oauth: bool = False,
 ) -> List[Tuple[str, str]]:
     """Temporarily connect to one MCP server, list its tools, disconnect.
 
     Returns list of ``(tool_name, description)`` tuples.
     Raises on connection failure.
+
+    Diagnostic probes are noninteractive by default: they may use or refresh
+    cached OAuth credentials, but they must never start a browser authorization
+    flow. Explicit login/setup callers opt in with ``allow_interactive_oauth``.
 
     ``details``: optional dict the probe fills with extra capability counts
     (``prompts``, ``resources``) — an out-param so the return shape stays
@@ -391,12 +400,21 @@ def _probe_single_server(
         finally:
             await server.shutdown()
 
-    try:
-        _run_on_mcp_loop(_probe(), timeout=connect_timeout + 10)
-    except BaseException as exc:
-        raise _unwrap_exception_group(exc) from None
-    finally:
-        _stop_mcp_loop_if_idle()
+    from contextlib import nullcontext
+    from tools.mcp_oauth import suppress_interactive_oauth
+
+    oauth_scope = (
+        nullcontext()
+        if allow_interactive_oauth
+        else suppress_interactive_oauth()
+    )
+    with oauth_scope:
+        try:
+            _run_on_mcp_loop(_probe(), timeout=connect_timeout + 10)
+        except BaseException as exc:
+            raise _unwrap_exception_group(exc) from None
+        finally:
+            _stop_mcp_loop_if_idle()
 
     return tools_found
 
@@ -620,7 +638,9 @@ def cmd_mcp_add(args):
     print(color(f"  Connecting to '{name}'...", Colors.CYAN))
 
     try:
-        tools = _probe_single_server(name, server_config)
+        tools = _probe_single_server(
+            name, server_config, allow_interactive_oauth=True
+        )
     except Exception as exc:
         _error(f"Failed to connect: {exc}")
         if _confirm("Save config anyway (you can test later)?", default=False):
@@ -801,7 +821,7 @@ def cmd_mcp_list(args=None):
 # ─── hermes mcp test ──────────────────────────────────────────────────────────
 
 def cmd_mcp_test(args):
-    """Test connection to an MCP server."""
+    """Test an MCP server without starting an OAuth/browser flow."""
     name = args.name
     servers = _get_mcp_servers()
 
@@ -810,7 +830,7 @@ def cmd_mcp_test(args):
         available = list(servers.keys())
         if available:
             _info(f"Available: {', '.join(available)}")
-        return
+        raise SystemExit(1)
 
     cfg = servers[name]
     print()
@@ -828,6 +848,12 @@ def cmd_mcp_test(args):
     headers = cfg.get("headers", {})
     if auth_type == "oauth":
         _info("Auth: OAuth 2.1 PKCE")
+        if not _oauth_tokens_present(name):
+            _error(
+                "OAuth authentication required — no token found. "
+                f"Run `hermes mcp login {name}` explicitly."
+            )
+            raise SystemExit(1)
     elif headers:
         for k, v in headers.items():
             if isinstance(v, str) and ("key" in k.lower() or "auth" in k.lower()):
@@ -849,7 +875,7 @@ def cmd_mcp_test(args):
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
         _error(f"Connection failed ({elapsed_ms:.0f}ms): {exc}")
-        return
+        raise SystemExit(1) from None
 
     _success(f"Connected ({elapsed_ms:.0f}ms)")
     _success(f"Tools discovered: {len(tools)}")
@@ -919,7 +945,9 @@ def _reauth_oauth_server(name: str, server_config: dict) -> bool:
                 connect_timeout=_login_connect_timeout,
             )
             tools = _probe_single_server(
-                name, server_config, connect_timeout=_login_connect_timeout
+                name,
+                server_config,
+                connect_timeout=_login_connect_timeout,
             )
         # A clean probe is NOT proof of authentication. Some MCP servers
         # (notably Google's official Drive server) serve initialize +

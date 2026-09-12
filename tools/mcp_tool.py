@@ -4169,8 +4169,10 @@ class MCPServerTask:
                         # very first connect left the server unrevivable for
                         # the life of the process, even after the user
                         # re-authenticated with ``hermes mcp login``. Parking
-                        # keeps the task alive so the 300s self-probe (and an
-                        # explicit /mcp refresh) can pick up fresh tokens.
+                        # keeps the task alive so an explicit credential/config
+                        # change or /mcp refresh can wake it. Permanent failures
+                        # deliberately do not self-probe: time alone cannot fix
+                        # them and repeated auth attempts can launch consent UX.
                         if _is_auth_error(root):
                             logger.warning(
                                 "MCP server '%s' failed initial authentication, "
@@ -4192,15 +4194,13 @@ class MCPServerTask:
                         self._was_parked = True
                         self._deregister_tools()
                         self._reconnect_event.clear()
-                        parked = await self._wait_for_reconnect_or_shutdown(
-                            timeout=_PARKED_RETRY_INTERVAL
-                        )
+                        parked = await self._wait_for_reconnect_or_shutdown()
                         if parked == "shutdown":
                             return
                         logger.debug(
                             "MCP server '%s': attempting revival after "
-                            "permanent initial failure (self-probe or explicit "
-                            "reconnect request); rebuilding transport.",
+                            "permanent initial failure (explicit reconnect "
+                            "request); rebuilding transport.",
                             self.name,
                         )
                         initial_retries = 0
@@ -4304,23 +4304,21 @@ class MCPServerTask:
                     # immediately without burning the retry ladder.
                     logger.warning(
                         "MCP server '%s' hit a permanent error, parking "
-                        "without retries; will self-probe every %ds "
+                        "without retries until config, credentials, or a user "
+                        "action changes "
                         "(state: connected → parked): %s: %s",
-                        self.name, _PARKED_RETRY_INTERVAL,
-                        type(root).__name__, root,
+                        self.name, type(root).__name__, root,
                     )
                     self._was_parked = True
                     self._deregister_tools()
                     self._reconnect_event.clear()
-                    parked = await self._wait_for_reconnect_or_shutdown(
-                        timeout=_PARKED_RETRY_INTERVAL
-                    )
+                    parked = await self._wait_for_reconnect_or_shutdown()
                     if parked == "shutdown":
                         return
                     logger.debug(
                         "MCP server '%s': attempting revival from parked state "
-                        "(permanent error; self-probe or explicit reconnect "
-                        "request); rebuilding transport.",
+                        "(permanent error; explicit reconnect request); "
+                        "rebuilding transport.",
                         self.name,
                     )
                     self._reconnect_retries = _MAX_RECONNECT_RETRIES
@@ -4629,18 +4627,23 @@ def _normalize_server_trust(value: Any) -> str:
 def _annotation_read_only_hint(mcp_tool: Any) -> bool:
     """Return True only when the tool's annotations carry readOnlyHint=True.
 
-    Accepts both SDK annotation objects (attribute access) and plain dicts
-    (schema-cache JSON). Anything else — missing annotations, missing key,
-    non-bool truthy values — is False: unknown metadata means the tool must
-    be treated as write-capable.
+    Accepts both MCP's wire alias (``readOnlyHint``) and the modern Python
+    SDK field name (``read_only_hint``), on SDK annotation objects or plain
+    dicts from the schema cache. Anything else — missing annotations,
+    missing key, non-bool truthy values — is False: unknown metadata means
+    the tool must be treated as write-capable.
     """
     annotations = getattr(mcp_tool, "annotations", None)
     if annotations is None:
         return False
     if isinstance(annotations, dict):
         hint = annotations.get("readOnlyHint")
+        if hint is None:
+            hint = annotations.get("read_only_hint")
     else:
         hint = getattr(annotations, "readOnlyHint", None)
+        if hint is None:
+            hint = getattr(annotations, "read_only_hint", None)
     return hint is True
 
 
@@ -6184,12 +6187,22 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
                         )
                     _call_coro = server.session.call_tool(tool_name, arguments=args)
                     _watch_children = getattr(server, "_watch_stdio_children", None)
+                    _watch_coro = (
+                        _watch_children()
+                        if callable(_watch_children)
+                        else None
+                    )
                     _watch_ok = (
-                        _watch_children is not None
-                        and inspect.isawaitable(_watch_children())
+                        inspect.isawaitable(_watch_coro)
                         and asyncio.iscoroutine(_call_coro)
                     )
                     if not _watch_ok:
+                        # We constructed the watcher once so the fast-fail
+                        # branch can reuse that exact awaitable. If the RPC is
+                        # a synchronous test stub, close the unused coroutine
+                        # instead of leaking a RuntimeWarning.
+                        if asyncio.iscoroutine(_watch_coro):
+                            _watch_coro.close()
                         # Stubbed sessions (MagicMock in tests) return a
                         # non-awaitable, or there is no child-watcher to race
                         # against: plain await is exactly the pre-#81995
@@ -6205,7 +6218,7 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
                         # the call immediately instead of riding out the full
                         # tool timeout.
                         rpc_task = asyncio.ensure_future(_call_coro)
-                        watch_task = asyncio.ensure_future(_watch_children())
+                        watch_task = asyncio.ensure_future(_watch_coro)
                         try:
                             done, _pending = await asyncio.wait(
                                 {rpc_task, watch_task},
@@ -8143,6 +8156,7 @@ def refresh_agent_mcp_tools(
     enabled_override=None,
     disabled_override=None,
     quiet_mode: bool = True,
+    content_aware: bool = False,
 ) -> set:
     """Re-derive an already-built agent's tool snapshot from the live registry.
 
@@ -8244,10 +8258,31 @@ def refresh_agent_mcp_tools(
             for t in (getattr(agent, "tools", None) or [])
         }
         if new_names == current:
-            # No change → leave the live snapshot untouched (no churn), but
-            # record the generation so an in-flight older caller can't clobber.
-            agent._tool_snapshot_generation = max(published_gen, snapshot_generation)
-            return set()
+            # Same NAME set. For MCP-reload callers that is "no change" —
+            # leave the live snapshot untouched (no churn). Content-aware
+            # callers (the compaction boundary) also diff the serialized
+            # bytes: dynamic schemas (image_generate capabilities,
+            # delegate_task limits, execute_code stubs) change CONTENT
+            # under stable names when config changes between compactions.
+            content_changed = False
+            if content_aware:
+                try:
+                    _stable = json.dumps(
+                        (getattr(agent, "tools", None) or []),
+                        sort_keys=True, separators=(",", ":"), default=str,
+                    )
+                    _new = json.dumps(
+                        new_defs, sort_keys=True, separators=(",", ":"),
+                        default=str,
+                    )
+                    content_changed = _stable != _new
+                except Exception:  # noqa: BLE001
+                    content_changed = False
+            if not content_changed:
+                # Record the generation so an in-flight older caller can't
+                # clobber.
+                agent._tool_snapshot_generation = max(published_gen, snapshot_generation)
+                return set()
         agent.tools = new_defs
         agent.valid_tool_names = new_names
         # Publish context-engine routing names atomically with the snapshot.

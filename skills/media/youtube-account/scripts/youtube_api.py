@@ -13,6 +13,12 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from _storage import credentials_payload, read_json, write_private_json  # noqa: E402
+
 
 HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 TOKEN_PATH = HERMES_HOME / "youtube_token.json"
@@ -21,10 +27,16 @@ TOKEN_PATH = HERMES_HOME / "youtube_token.json"
 def service():
     if not TOKEN_PATH.exists():
         raise FileNotFoundError("No youtube_token.json in the active Hermes profile")
+    previous = read_json(TOKEN_PATH)
     credentials = Credentials.from_authorized_user_file(str(TOKEN_PATH))
     if credentials.expired and credentials.refresh_token:
         credentials.refresh(Request())
-        TOKEN_PATH.write_text(credentials.to_json(), encoding="utf-8")
+        write_private_json(
+            TOKEN_PATH,
+            credentials_payload(credentials, previous=previous),
+        )
+    if not credentials.valid:
+        raise RuntimeError("Stored YouTube credentials are invalid")
     return build("youtube", "v3", credentials=credentials, cache_discovery=False)
 
 

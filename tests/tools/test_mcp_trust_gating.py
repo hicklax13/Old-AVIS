@@ -237,6 +237,9 @@ class TestAnnotationCaptureAtDiscovery:
             SimpleNamespace(annotations={"readOnlyHint": True})
         ) is True
         assert mcp_tool._annotation_read_only_hint(
+            SimpleNamespace(annotations={"read_only_hint": True})
+        ) is True
+        assert mcp_tool._annotation_read_only_hint(
             SimpleNamespace(annotations={"readOnlyHint": "yes"})
         ) is False  # non-bool truthy → NOT read-only (hint must be True)
         assert mcp_tool._annotation_read_only_hint(
@@ -244,4 +247,17 @@ class TestAnnotationCaptureAtDiscovery:
         ) is False
         assert mcp_tool._annotation_read_only_hint(
             SimpleNamespace()
+        ) is False
+
+    def test_modern_sdk_annotation_field_supported(self):
+        """MCP SDK 2.x models expose the Pythonic read_only_hint field."""
+        assert mcp_tool._annotation_read_only_hint(
+            SimpleNamespace(
+                annotations=SimpleNamespace(read_only_hint=True)
+            )
+        ) is True
+        assert mcp_tool._annotation_read_only_hint(
+            SimpleNamespace(
+                annotations=SimpleNamespace(read_only_hint="yes")
+            )
         ) is False

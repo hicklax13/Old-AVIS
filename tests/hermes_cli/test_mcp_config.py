@@ -302,6 +302,108 @@ class TestMcpTest:
         assert "Connected" in out
         assert "Tools discovered: 2" in out
 
+    def test_missing_server_exits_nonzero(self, tmp_path, capsys):
+        _seed_config(tmp_path, {})
+
+        from hermes_cli.mcp_config import cmd_mcp_test
+
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_mcp_test(_make_args(name="missing"))
+
+        assert exc_info.value.code == 1
+        assert "not found" in capsys.readouterr().out
+
+    def test_oauth_without_cached_token_never_probes_and_exits_nonzero(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        _seed_config(tmp_path, {
+            "oauth-srv": {
+                "url": "https://example.test/mcp",
+                "auth": "oauth",
+            },
+        })
+
+        monkeypatch.setattr(
+            "hermes_cli.mcp_config._oauth_tokens_present", lambda _name: False
+        )
+
+        def forbidden_probe(*_args, **_kwargs):
+            raise AssertionError("missing OAuth credentials must short-circuit")
+
+        monkeypatch.setattr(
+            "hermes_cli.mcp_config._probe_single_server", forbidden_probe
+        )
+
+        from hermes_cli.mcp_config import cmd_mcp_test
+
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_mcp_test(_make_args(name="oauth-srv"))
+
+        assert exc_info.value.code == 1
+        assert "OAuth authentication required" in capsys.readouterr().out
+
+    def test_connection_failure_exits_nonzero(self, tmp_path, capsys, monkeypatch):
+        _seed_config(tmp_path, {
+            "offline": {"url": "https://offline.example.test/mcp"},
+        })
+
+        def failed_probe(*_args, **_kwargs):
+            raise ConnectionError("connection refused")
+
+        monkeypatch.setattr(
+            "hermes_cli.mcp_config._probe_single_server", failed_probe
+        )
+
+        from hermes_cli.mcp_config import cmd_mcp_test
+
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_mcp_test(_make_args(name="offline"))
+
+        assert exc_info.value.code == 1
+        assert "Connection failed" in capsys.readouterr().out
+
+    def test_probe_suppresses_oauth_interaction_by_default(self, monkeypatch):
+        """A diagnostic probe must enter the hard no-browser OAuth scope."""
+        import asyncio
+        from contextlib import contextmanager
+
+        from hermes_cli import mcp_config
+        import tools.mcp_oauth as mcp_oauth
+        import tools.mcp_tool as mcp_tool
+
+        state = {"suppressed": False, "connected": False}
+
+        @contextmanager
+        def fake_suppression():
+            state["suppressed"] = True
+            try:
+                yield
+            finally:
+                state["suppressed"] = False
+
+        class FakeServer:
+            _tools = []
+
+            async def shutdown(self):
+                return None
+
+        async def fake_connect(_name, _config):
+            assert state["suppressed"] is True
+            state["connected"] = True
+            return FakeServer()
+
+        def fake_run_on_mcp_loop(coro, timeout):
+            return asyncio.run(coro)
+
+        monkeypatch.setattr(mcp_oauth, "suppress_interactive_oauth", fake_suppression)
+        monkeypatch.setattr(mcp_tool, "_ensure_mcp_loop", lambda: None)
+        monkeypatch.setattr(mcp_tool, "_stop_mcp_loop_if_idle", lambda: None)
+        monkeypatch.setattr(mcp_tool, "_connect_server", fake_connect)
+        monkeypatch.setattr(mcp_tool, "_run_on_mcp_loop", fake_run_on_mcp_loop)
+
+        assert mcp_config._probe_single_server("srv", {"url": "https://x.test/mcp"}) == []
+        assert state["connected"] is True
+
     def test_probe_uses_configured_connect_timeout(self, monkeypatch):
         """OAuth-capable probes must not hard-code a short 30s timeout."""
         import asyncio

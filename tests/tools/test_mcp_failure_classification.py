@@ -152,6 +152,19 @@ def test_permanent_failure_parks_without_retry_ladder(monkeypatch, tmp_path, cap
             "should park immediately"
         )
 
+        # A permanent park is sticky: time passing must not spawn the same
+        # missing command again. Only an explicit config/credential/user action
+        # may wake it.
+        await _real_sleep(0.1)
+        assert state["transport_calls"] == 1
+
+        task._reconnect_event.set()
+        for _ in range(500):
+            await _real_sleep(0)
+            if state["transport_calls"] >= 2:
+                break
+        assert state["transport_calls"] == 2
+
         task._shutdown_event.set()
         task._reconnect_event.set()
         try:
@@ -165,7 +178,9 @@ def test_permanent_failure_parks_without_retry_ladder(monkeypatch, tmp_path, cap
         r for r in caplog.records
         if r.levelno == logging.WARNING and "permanent error" in r.getMessage()
     ]
-    assert len(park_warnings) == 1
+    # One warning for the initial failure and one after the explicit wake.
+    # There is no timer-driven third attempt.
+    assert len(park_warnings) == 2
     assert "FileNotFoundError" in park_warnings[0].getMessage()
 
 
@@ -236,9 +251,10 @@ def test_initial_auth_failure_parks_and_revives_after_relogin(
                 "run task exited on a 401 — the server is now unrevivable"
             )
 
-            # The user re-authenticates. Nothing sets _reconnect_event:
-            # revival must come from the timed self-probe alone.
+            # The user re-authenticates; the explicit auth completion path
+            # wakes the parked task. Time alone must not retry a terminal 401.
             state["authenticated"] = True
+            task._reconnect_event.set()
             for _ in range(200):
                 await _real_sleep(0.01)
                 if task.session is not None:

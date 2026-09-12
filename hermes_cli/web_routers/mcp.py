@@ -190,25 +190,30 @@ async def test_mcp_server(name: str, profile: Optional[str] = None):
         # contextvar provides (copied into this to_thread worker; and
         # _run_on_mcp_loop re-wraps it onto the MCP event-loop thread).
         with _config_profile_scope(profile):
+            if needs_oauth_token and not _oauth_tokens_present(name):
+                return [], False
             tools = _probe_single_server(name, servers[name], details=details)
-            token_present = _oauth_tokens_present(name) if needs_oauth_token else True
-            return tools, token_present
+            return tools, True
 
     try:
         # Probe blocks on a dedicated MCP event loop — run in a thread so the
         # FastAPI event loop is never blocked.
         tools, token_present = await asyncio.to_thread(_probe_scoped)
     except Exception as exc:
+        from tools.mcp_tool import _classify_mcp_failure
+
         return {
             "ok": False,
             "error": str(exc),
             "tools": [],
+            "retryable": _classify_mcp_failure(exc) == "transient",
         }
     if not token_present:
         return {
             "ok": False,
             "error": "OAuth authentication required — no token found.",
             "tools": [],
+            "retryable": False,
         }
     # Additive-optional per-tool schema size (chars of the converted registry
     # schema) — the desktop's cost overlay estimates tokens from it. Older

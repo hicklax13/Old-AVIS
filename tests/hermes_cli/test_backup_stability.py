@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -9,10 +10,13 @@ from hermes_cli.backup import (
     BackupInProgressError,
     _atomic_output_path,
     _backup_operation_lock,
+    _safe_copy_db,
+    _safe_restore_db,
     _write_full_zip_backup,
     create_quick_snapshot,
     list_quick_snapshots,
 )
+from hermes_security import verify_private_path, verify_private_tree
 
 
 def test_backup_lock_rejects_a_second_operation(tmp_path) -> None:
@@ -35,6 +39,7 @@ def test_atomic_output_publishes_only_after_clean_close(tmp_path) -> None:
 
     assert final.read_bytes() == b"complete"
     assert not partial.exists()
+    verify_private_path(final, directory=False)
 
 
 def test_atomic_output_keeps_previous_file_after_failure(tmp_path) -> None:
@@ -48,6 +53,47 @@ def test_atomic_output_keeps_previous_file_after_failure(tmp_path) -> None:
 
     assert final.read_bytes() == b"previous"
     assert not partial.exists()
+
+
+def test_atomic_output_tightens_existing_destination_before_replace(
+    tmp_path, monkeypatch
+) -> None:
+    final = tmp_path / "backup.zip"
+    final.write_bytes(b"previous")
+    if hasattr(final, "chmod"):
+        final.chmod(0o644)
+
+    from hermes_cli import backup
+
+    real_replace = backup.os.replace
+
+    def checked_replace(source, destination) -> None:
+        verify_private_path(final, directory=False)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(backup.os, "replace", checked_replace)
+    with _atomic_output_path(final) as partial:
+        partial.write_bytes(b"replacement")
+
+    assert final.read_bytes() == b"replacement"
+    verify_private_path(final, directory=False)
+
+
+def test_sqlite_copy_and_restore_destinations_are_private(tmp_path) -> None:
+    src = tmp_path / "source.db"
+    with sqlite3.connect(src) as conn:
+        conn.execute("CREATE TABLE proof (value TEXT)")
+        conn.execute("INSERT INTO proof VALUES ('expected')")
+
+    copied = tmp_path / "copied.db"
+    assert _safe_copy_db(src, copied) is True
+    verify_private_path(copied, directory=False)
+
+    restored = tmp_path / "restored.db"
+    assert _safe_restore_db(copied, restored) is True
+    verify_private_path(restored, directory=False)
+    with sqlite3.connect(restored) as conn:
+        assert conn.execute("SELECT value FROM proof").fetchone() == ("expected",)
 
 
 def test_quick_snapshot_is_published_with_manifest(tmp_path, monkeypatch) -> None:
@@ -74,12 +120,15 @@ def test_quick_snapshot_is_published_with_manifest(tmp_path, monkeypatch) -> Non
     snapshot_id = create_quick_snapshot(hermes_home=home)
 
     assert snapshot_id is not None
+    verify_private_tree(home / "state-snapshots" / snapshot_id)
     assert len(published) == 1
     manifest = json.loads(
         (home / "state-snapshots" / snapshot_id / "manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["id"] == snapshot_id
-    assert manifest["files"] == {"config.yaml": 10}
+    assert manifest["files"] == {
+        "config.yaml": (home / "config.yaml").stat().st_size,
+    }
 
 
 def test_quick_snapshot_listing_ignores_partial_directories(tmp_path) -> None:

@@ -129,8 +129,13 @@ class TestCreateProfile:
             line.startswith("#") or not line.strip()
             for line in content.splitlines()
         )
-        mode = stat.S_IMODE(env_path.stat().st_mode)
-        assert mode == 0o600
+        if os.name == "nt":
+            from hermes_security import verify_private_path
+
+            verify_private_path(env_path, directory=False)
+        else:
+            mode = stat.S_IMODE(env_path.stat().st_mode)
+            assert mode == 0o600
 
 
     def test_fresh_profile_inherits_a_usable_model(self, profile_env):
@@ -284,7 +289,12 @@ class TestBackfillProfileEnvs:
         assert sorted(backfilled) == ["old1", "old2"]
         for p in (p1, p2):
             assert (p / ".env").read_text() == "OPENROUTER_API_KEY=root-key\n"
-            assert stat.S_IMODE((p / ".env").stat().st_mode) == 0o600
+            if os.name == "nt":
+                from hermes_security import verify_private_path
+
+                verify_private_path(p / ".env", directory=False)
+            else:
+                assert stat.S_IMODE((p / ".env").stat().st_mode) == 0o600
 
 
     def test_placeholder_when_default_has_no_env(self, profile_env):
@@ -622,6 +632,7 @@ class TestAliasCollision:
 class TestWrapperScript:
     """Tests for create_wrapper_script() and remove_wrapper_script()."""
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX wrapper contract")
     def test_creates_sh_on_posix(self, profile_env, monkeypatch):
         monkeypatch.setattr("hermes_cli.profiles.shutil.which", lambda name: "/opt/hermes/bin/hermes")
         from hermes_cli.profiles import create_wrapper_script
@@ -707,7 +718,8 @@ class TestFindAliasForProfile:
         info = next(p for p in list_profiles() if p.name == "steve")
         assert info.alias_name == "qiaobusi"
         assert info.alias_path is not None
-        assert info.alias_path.name == "qiaobusi"
+        expected_name = "qiaobusi.bat" if sys.platform == "win32" else "qiaobusi"
+        assert info.alias_path.name == expected_name
 
 
 # ===================================================================
@@ -798,6 +810,22 @@ class TestExportImport:
         assert "default/.env" not in names  # credentials excluded
         assert "default/SOUL.md" in names
         assert "default/memories/MEMORY.md" in names
+
+    def test_imported_profile_tree_is_private(self, profile_env, tmp_path):
+        from hermes_security import verify_private_tree
+
+        default_dir = get_profile_dir("default")
+        (default_dir / "config.yaml").write_text("model: test\n", encoding="utf-8")
+        nested = default_dir / "skills" / "sample"
+        nested.mkdir(parents=True, exist_ok=True)
+        (nested / "SKILL.md").write_text("# Sample\n", encoding="utf-8")
+
+        archive = tmp_path / "default.tar.gz"
+        export_profile("default", str(archive))
+        imported = import_profile(str(archive), name="imported")
+
+        assert (imported / "skills" / "sample" / "SKILL.md").is_file()
+        verify_private_tree(imported)
 
 
     def test_export_default_handles_broken_symlinks(self, profile_env, tmp_path):
@@ -1175,5 +1203,3 @@ class TestResolveProfileEnvSpelling:
         # No HERMES_HOME: the platform default root applies (existing contract).
         monkeypatch.delenv("HERMES_HOME", raising=False)
         assert Path(resolve_profile_env("default")) == _get_default_hermes_home()
-
-

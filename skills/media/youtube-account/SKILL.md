@@ -1,6 +1,10 @@
 ---
 name: youtube-account
-description: "Read a user's private YouTube channel, subscriptions, and playlists through a profile-scoped OAuth grant. Use for account-specific YouTube requests, not public transcripts or YouTube Music/TV control."
+description: "Read a profile's private YouTube data via OAuth."
+version: 1.0.0
+author: Hermes Agent
+license: MIT
+platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [YouTube, OAuth, Media]
@@ -34,20 +38,28 @@ Hermes-managed Python environment used by the active profile.
    python SKILL_DIR/scripts/setup.py --client-secret /path/to/client.json
    ```
 
-3. Generate an authorization URL and give it to the user. Never automate or
-   collect their Google password, MFA, or security-key response.
+3. If `--check` reports that authorization is needed, start the protected
+   loopback flow. Never automate or collect the user's Google password, MFA,
+   security-key response, callback URL, or authorization code.
 
    ```bash
-   python SKILL_DIR/scripts/setup.py --auth-url
+   python SKILL_DIR/scripts/setup.py --authorize
    ```
 
-4. The redirect to `http://localhost:1` is expected to fail. Ask the user for
-   the full redirected URL, then exchange it (or its raw `code` value):
+4. The script opens Google's official consent page in the system browser and
+   listens only on an ephemeral `127.0.0.1` port. Tell the user to finish the
+   consent screen in that browser. The callback is captured directly, checked
+   against the exact OAuth state, and exchanged with PKCE in the same process.
+   Do not ask the user to copy anything from the address bar or chat.
 
    ```bash
-   python SKILL_DIR/scripts/setup.py --auth-code 'FULL_REDIRECT_URL_OR_CODE'
    python SKILL_DIR/scripts/setup.py --check
    ```
+
+The authorization wait defaults to five minutes and can be bounded from 30 to
+900 seconds with `--timeout`. Cancellation, denial, timeout, or token-exchange
+failure preserves the existing working token. Dependencies are exact-pinned in
+`scripts/requirements.txt`; `--install-deps` installs only those pins.
 
 Google Cloud must have YouTube Data API v3 enabled for the OAuth project. Treat
 administrator or Google policy denials as authoritative.

@@ -621,8 +621,11 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                     )
                     return False
 
-            # Ensure session directory exists
-            self._session_path.mkdir(parents=True, exist_ok=True)
+            # Linked-device credentials must never inherit the repository or
+            # profile root's broader Windows ACL.
+            from hermes_security import secure_private_directory
+
+            secure_private_directory(self._session_path)
             
             # Check if bridge is already running and connected
             import aiohttp

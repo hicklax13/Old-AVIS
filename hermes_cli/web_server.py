@@ -13590,6 +13590,10 @@ def _mcp_server_summary(name: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
         "env": _redact_mcp_env(cfg.get("env") or {}),
         "auth": auth,
         "enabled": cfg.get("enabled", True) is not False,
+        # Safe, human-authored explanation for intentionally inactive rows.
+        # The Desktop cannot present a truthful unsupported/paid state if this
+        # is dropped from the redacted summary response.
+        "blocked_reason": cfg.get("blocked_reason"),
         # Tool selection: list of enabled tool names, or None = all.
         "tools": cfg.get("tools"),
     }

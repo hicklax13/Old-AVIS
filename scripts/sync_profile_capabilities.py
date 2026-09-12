@@ -14,11 +14,12 @@ from __future__ import annotations
 import argparse
 import copy
 import fnmatch
+import hashlib
 import os
 import re
 import shutil
 import sys
-import tempfile
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,14 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from hermes_security import (
+    create_private_temp_file,
+    is_reparse_point,
+    secure_private_directory,
+    secure_private_path,
+)
+from hermes_cli.capability_secret_policy import classify_env_key
 
 
 _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -71,6 +80,9 @@ class SyncReport:
     changed_configs: list[str] = field(default_factory=list)
     changed_envs: list[str] = field(default_factory=list)
     copied_skills: dict[str, list[str]] = field(default_factory=dict)
+    replaced_skills: dict[str, list[str]] = field(default_factory=dict)
+    removed_service_local: dict[str, list[str]] = field(default_factory=dict)
+    unmanaged_env_keys: list[str] = field(default_factory=list)
     backup_dir: str | None = None
 
 
@@ -114,6 +126,8 @@ def _collect_capability_config(
     """Build one deterministic union; default wins definition conflicts."""
     ordered = sorted(profiles, key=lambda p: (p.name != "default", p.name))
     mcp_servers: dict[str, Any] = {}
+    mcp_owners: dict[str, str] = {}
+    mcp_conflicts: list[str] = []
     platform_toolsets: dict[str, list[str]] = {}
     plugin_enabled: list[str] = []
     plugin_seen: set[str] = set()
@@ -123,12 +137,32 @@ def _collect_capability_config(
         servers = cfg.get("mcp_servers")
         if isinstance(servers, dict):
             for name, entry in servers.items():
-                if name in mcp_servers or not isinstance(entry, dict):
+                if not isinstance(entry, dict):
                     continue
                 enabled_entry = copy.deepcopy(entry)
                 enabled_entry.pop("disabled", None)
-                enabled_entry["enabled"] = True
-                mcp_servers[str(name)] = enabled_entry
+                # Connor's baseline is enabled everywhere. The sole explicit
+                # exception is a classified inactive capability: it must carry
+                # both ``enabled: false`` and a human-readable blocked_reason.
+                # That preserves no-paid-services / officially-unsupported /
+                # absent-local states without allowing a stray false flag in
+                # one profile to silently disable a working capability.
+                blocked_reason = enabled_entry.get("blocked_reason")
+                explicitly_blocked = (
+                    enabled_entry.get("enabled") is False
+                    and isinstance(blocked_reason, str)
+                    and bool(blocked_reason.strip())
+                )
+                enabled_entry["enabled"] = not explicitly_blocked
+                normalized_name = str(name)
+                if normalized_name in mcp_servers:
+                    if mcp_servers[normalized_name] != enabled_entry:
+                        mcp_conflicts.append(
+                            f"{normalized_name} ({mcp_owners[normalized_name]} != {profile.name})"
+                        )
+                    continue
+                mcp_servers[normalized_name] = enabled_entry
+                mcp_owners[normalized_name] = profile.name
 
         platform_cfg = cfg.get("platform_toolsets")
         if isinstance(platform_cfg, dict):
@@ -149,6 +183,12 @@ def _collect_capability_config(
                 if normalized and normalized not in plugin_seen:
                     plugin_seen.add(normalized)
                     plugin_enabled.append(normalized)
+
+    if mcp_conflicts:
+        raise SyncError(
+            "MCP definition conflicts require an explicit canonical choice: "
+            + ", ".join(sorted(set(mcp_conflicts)))
+        )
 
     # Validate after the union is settled and before any file can be changed.
     from hermes_cli.mcp_config import validate_mcp_server_entry
@@ -174,28 +214,103 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return load_env_file(path)
 
 
-def _collect_env_union(profiles: list[ProfileHome]) -> dict[str, str]:
-    values: dict[str, str] = {}
-    owners: dict[str, str] = {}
+def _collect_env_union(
+    profiles: list[ProfileHome],
+    *,
+    resolve_conflicts_from_default: bool = False,
+) -> tuple[dict[str, str], dict[str, list[str]], list[str]]:
+    """Return canonical shared values and service-local migration removals.
+
+    ``default`` is the only credential authority. A shared key first appearing
+    in another profile is refused instead of silently promoted. Unknown keys
+    are refused regardless of their value so a suffix heuristic can never
+    decide credential scope.
+    """
+    parsed = {profile.name: _parse_env_file(profile.path / ".env") for profile in profiles}
+    default_values = parsed["default"]
+    ambiguous: list[str] = []
+    unmanaged: set[str] = set()
+    service_local_removals: dict[str, list[str]] = {}
+    for profile in profiles:
+        for key in parsed[profile.name]:
+            policy = classify_env_key(key)
+            if policy.ambiguous:
+                ambiguous.append(f"{key} ({profile.name}, {policy.scope})")
+            elif not policy.shared:
+                unmanaged.add(key)
+                if policy.scope == "service_local" and profile.name != "default":
+                    service_local_removals.setdefault(profile.name, []).append(key)
+    if ambiguous:
+        raise SyncError(
+            "Ambiguous environment keys require explicit classification before sync: "
+            + ", ".join(sorted(set(ambiguous)))
+        )
+
+    values = {
+        key: value
+        for key, value in default_values.items()
+        if classify_env_key(key).shared
+    }
+    noncanonical: list[str] = []
     conflicts: list[str] = []
     for profile in profiles:
-        for key, value in _parse_env_file(profile.path / ".env").items():
-            if key in values and values[key] != value:
-                conflicts.append(f"{key} ({owners[key]} != {profile.name})")
+        for key, value in parsed[profile.name].items():
+            if not classify_env_key(key).shared:
                 continue
-            values[key] = value
-            owners.setdefault(key, profile.name)
-    if conflicts:
+            if key not in default_values:
+                noncanonical.append(f"{key} ({profile.name})")
+            elif value != default_values[key]:
+                conflicts.append(f"{key} (default != {profile.name})")
+    if noncanonical:
+        raise SyncError(
+            "Shared account keys must first be installed in canonical default: "
+            + ", ".join(sorted(set(noncanonical)))
+        )
+    if conflicts and not resolve_conflicts_from_default:
         raise SyncError(
             "Static account-key conflicts require an explicit owner choice: "
             + ", ".join(sorted(set(conflicts)))
         )
-    return values
+    return (
+        values,
+        {name: sorted(keys) for name, keys in service_local_removals.items()},
+        sorted(unmanaged),
+    )
 
 
-def _skill_sources(profiles: list[ProfileHome]) -> dict[Path, Path]:
-    """Map relative skill directory to source; default wins conflicts."""
+def _skill_tree_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        parent = Path(dirpath)
+        dirnames[:] = sorted(
+            name
+            for name in dirnames
+            if name not in _RUNTIME_SKILL_DIRS and not is_reparse_point(parent / name)
+        )
+        for name in sorted(filenames):
+            path = parent / name
+            if is_reparse_point(path) or name in _ignore_private_skill_files(str(parent), [name]):
+                continue
+            relative = path.relative_to(root).as_posix().encode("utf-8")
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _skill_sources(
+    profiles: list[ProfileHome],
+    *,
+    resolve_conflicts_from_default: bool = False,
+) -> tuple[dict[Path, Path], dict[str, list[Path]]]:
+    """Map skill directories to sources and explicit default-led replacements."""
     sources: dict[Path, Path] = {}
+    digests: dict[Path, str] = {}
+    owners: dict[Path, str] = {}
+    conflicts: list[str] = []
+    replacements: dict[str, list[Path]] = {}
     ordered = sorted(profiles, key=lambda p: (p.name != "default", p.name))
     for profile in ordered:
         root = profile.path / "skills"
@@ -203,8 +318,24 @@ def _skill_sources(profiles: list[ProfileHome]) -> dict[Path, Path]:
             continue
         for manifest in sorted(root.rglob("SKILL.md")):
             rel = manifest.parent.relative_to(root)
-            sources.setdefault(rel, manifest.parent)
-    return sources
+            source = manifest.parent
+            source_digest = _skill_tree_digest(source)
+            if rel in sources:
+                if digests[rel] != source_digest:
+                    if resolve_conflicts_from_default and owners[rel] == "default":
+                        replacements.setdefault(profile.name, []).append(rel)
+                    else:
+                        conflicts.append(f"{rel.as_posix()} ({owners[rel]} != {profile.name})")
+                continue
+            sources[rel] = source
+            digests[rel] = source_digest
+            owners[rel] = profile.name
+    if conflicts:
+        raise SyncError(
+            "Skill definition conflicts require an explicit canonical choice: "
+            + ", ".join(sorted(set(conflicts)))
+        )
+    return sources, {name: sorted(paths) for name, paths in replacements.items()}
 
 
 def _ignore_private_skill_files(_directory: str, names: list[str]) -> set[str]:
@@ -269,13 +400,40 @@ def _render_config(original: str, union: dict[str, Any]) -> str:
     return rendered
 
 
-def _render_env(original: str, current: dict[str, str], union: dict[str, str]) -> str:
-    missing = [key for key in sorted(union) if key not in current]
+def _render_env(
+    original: str,
+    current: dict[str, str],
+    union: dict[str, str],
+    *,
+    remove_keys: set[str] | frozenset[str] = frozenset(),
+    replace_values: dict[str, str] | None = None,
+) -> str:
+    replace_values = replace_values or {}
+    if replace_values:
+        from hermes_cli.config import _quote_env_value
+
+    assignment = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
+    retained_lines: list[str] = []
+    for line in original.splitlines():
+        match = assignment.match(line)
+        if match and match.group(1) in remove_keys:
+            continue
+        if match and match.group(1) in replace_values:
+            key = match.group(1)
+            retained_lines.append(f"{key}={_quote_env_value(replace_values[key])}")
+            continue
+        retained_lines.append(line)
+    rendered = "\n".join(retained_lines)
+    if original.endswith(("\n", "\r")):
+        rendered += "\n"
+
+    effective_current = {key: value for key, value in current.items() if key not in remove_keys}
+    missing = [key for key in sorted(union) if key not in effective_current]
     if not missing:
-        return original
+        return rendered
     from hermes_cli.config import _quote_env_value
 
-    rendered = original.rstrip()
+    rendered = rendered.rstrip()
     if rendered:
         rendered += "\n\n"
     rendered += "# Shared across profiles by scripts/sync_profile_capabilities.py\n"
@@ -285,17 +443,22 @@ def _render_env(original: str, current: dict[str, str], union: dict[str, str]) -
 
 
 def _atomic_write(path: Path, content: bytes, mode: int | None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
-    tmp_path = Path(tmp_name)
+    del mode  # Capability/profile files are always private, regardless of legacy mode.
+    secure_private_directory(path.parent)
+    tmp_path = create_private_temp_file(
+        path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
     try:
-        with os.fdopen(fd, "wb") as handle:
+        with open(tmp_path, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        if mode is not None:
-            os.chmod(tmp_path, mode)
+        if path.exists():
+            secure_private_path(path, directory=False)
         os.replace(tmp_path, path)
+        secure_private_path(path, directory=False)
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -304,17 +467,88 @@ def _backup_file(path: Path, profile: str, backup_root: Path) -> None:
     if not path.exists():
         return
     target = backup_root / profile / path.name
-    target.parent.mkdir(parents=True, exist_ok=True)
+    secure_private_directory(target.parent)
     shutil.copy2(path, target)
+    secure_private_path(target, directory=False)
 
 
-def synchronize(root: Path, *, apply: bool = False) -> SyncReport:
+def _backup_skill_tree(path: Path, profile: str, relative: Path, backup_root: Path) -> None:
+    target = backup_root / profile / "skills" / relative
+    secure_private_directory(target.parent)
+    shutil.copytree(path, target, symlinks=True)
+    secure_private_path(target, directory=True, recursive=True)
+
+
+def _private_skill_files(root: Path) -> Iterable[tuple[Path, Path]]:
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        parent = Path(dirpath)
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in _RUNTIME_SKILL_DIRS and not is_reparse_point(parent / name)
+        ]
+        for name in filenames:
+            path = parent / name
+            if is_reparse_point(path):
+                continue
+            if name in _ignore_private_skill_files(str(parent), [name]):
+                yield path.relative_to(root), path
+
+
+def _replace_skill_tree(source: Path, target: Path) -> Path:
+    """Atomically replace public skill code while retaining local secret files.
+
+    Return the private sibling holding the old tree. The caller keeps it until
+    every profile verifies, then deletes it; on any later failure it can swap
+    the original tree back without reconstructing it from individual files.
+    """
+    if not target.is_dir():
+        raise SyncError(f"Skill replacement target is missing: {target}")
+    secure_private_directory(target.parent)
+    nonce = uuid.uuid4().hex
+    staged = target.parent / f".{target.name}.sync-new-{nonce}"
+    original = target.parent / f".{target.name}.sync-old-{nonce}"
+    try:
+        shutil.copytree(source, staged, ignore=_ignore_private_skill_files)
+        for relative, private_file in _private_skill_files(target):
+            destination = staged / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(private_file, destination)
+        secure_private_path(staged, directory=True, recursive=True)
+        os.replace(target, original)
+        try:
+            os.replace(staged, target)
+            secure_private_path(target, directory=True, recursive=True)
+        except BaseException:
+            if target.exists():
+                shutil.rmtree(target)
+            os.replace(original, target)
+            raise
+        return original
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged)
+
+
+def synchronize(
+    root: Path,
+    *,
+    apply: bool = False,
+    resolve_env_conflicts_from_default: bool = False,
+    resolve_skill_conflicts_from_default: bool = False,
+) -> SyncReport:
     """Plan or apply all-profile capability reconciliation."""
     profiles = discover_profiles(root)
     configs = {p.name: _read_mapping(p.path / "config.yaml") for p in profiles}
     union = _collect_capability_config(profiles, configs)
-    env_union = _collect_env_union(profiles)
-    skill_sources = _skill_sources(profiles)
+    env_union, service_local_removals, unmanaged_env_keys = _collect_env_union(
+        profiles,
+        resolve_conflicts_from_default=resolve_env_conflicts_from_default,
+    )
+    skill_sources, replacement_skills = _skill_sources(
+        profiles,
+        resolve_conflicts_from_default=resolve_skill_conflicts_from_default,
+    )
 
     config_updates: dict[str, tuple[Path, bytes]] = {}
     env_updates: dict[str, tuple[Path, bytes]] = {}
@@ -332,13 +566,23 @@ def synchronize(root: Path, *, apply: bool = False) -> SyncReport:
         env_path = profile.path / ".env"
         env_raw = env_path.read_bytes() if env_path.exists() else b""
         current_env = _parse_env_file(env_path)
-        if any(key not in current_env for key in env_union):
+        remove_keys = set(service_local_removals.get(profile.name, []))
+        if (
+            any(current_env.get(key) != value for key, value in env_union.items())
+            or remove_keys
+        ):
             env_newline = _newline_for(env_raw)
             env_original = env_raw.decode("utf-8-sig")
             rendered_env = _render_env(
                 env_original,
                 current_env,
                 env_union,
+                remove_keys=remove_keys,
+                replace_values={
+                    key: value
+                    for key, value in env_union.items()
+                    if current_env.get(key) != value
+                },
             ).replace("\n", env_newline).encode("utf-8")
         else:
             # Preserve an existing BOM and exact newline bytes when no keys are
@@ -348,9 +592,17 @@ def synchronize(root: Path, *, apply: bool = False) -> SyncReport:
             env_updates[profile.name] = (env_path, rendered_env)
 
         skills_root = profile.path / "skills"
-        missing_skills[profile.name] = [
-            rel for rel in sorted(skill_sources) if not (skills_root / rel / "SKILL.md").is_file()
-        ]
+        profile_missing: list[Path] = []
+        for rel in sorted(skill_sources):
+            target = skills_root / rel
+            if (target / "SKILL.md").is_file():
+                continue
+            if target.exists():
+                raise SyncError(
+                    f"Refusing to merge a skill into a partial target: {profile.name}:{rel.as_posix()}"
+                )
+            profile_missing.append(rel)
+        missing_skills[profile.name] = profile_missing
 
     report = SyncReport(
         profiles=[p.name for p in profiles],
@@ -364,55 +616,143 @@ def synchronize(root: Path, *, apply: bool = False) -> SyncReport:
             for name, paths in missing_skills.items()
             if paths
         },
+        replaced_skills={
+            name: [path.as_posix() for path in paths]
+            for name, paths in replacement_skills.items()
+            if paths
+        },
+        removed_service_local=service_local_removals,
+        unmanaged_env_keys=unmanaged_env_keys,
     )
 
     if not apply:
         return report
 
+    if (
+        not config_updates
+        and not env_updates
+        and not any(missing_skills.values())
+        and not any(replacement_skills.values())
+    ):
+        return report
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_root = root.resolve() / "backups" / "profile-capability-sync" / timestamp
+    secure_private_directory(backup_root)
     report.backup_dir = str(backup_root)
 
     profile_by_name = {p.name: p for p in profiles}
-    for name, (path, content) in config_updates.items():
+    all_file_updates = [*config_updates.values(), *env_updates.values()]
+    originals = {
+        path: path.read_bytes() if path.exists() else None for path, _content in all_file_updates
+    }
+    for name, (path, _content) in config_updates.items():
         _backup_file(path, name, backup_root)
-        mode = path.stat().st_mode if path.exists() else None
-        _atomic_write(path, content, mode)
-
-    for name, (path, content) in env_updates.items():
+    for name, (path, _content) in env_updates.items():
         _backup_file(path, name, backup_root)
-        mode = path.stat().st_mode if path.exists() else 0o600
-        _atomic_write(path, content, mode)
-        try:
-            from tools.mcp_oauth import _secure_windows_credential_acl
-
-            _secure_windows_credential_acl(path, directory=False)
-        except Exception:
-            pass
-
-    for name, rel_paths in missing_skills.items():
+    for name, rel_paths in replacement_skills.items():
         target_root = profile_by_name[name].path / "skills"
         for rel in rel_paths:
-            target = target_root / rel
-            shutil.copytree(
-                skill_sources[rel],
-                target,
-                dirs_exist_ok=True,
-                ignore=_ignore_private_skill_files,
-            )
+            _backup_skill_tree(target_root / rel, name, rel, backup_root)
 
-    # Fresh read-back proves the materialized state, not only the write plan.
-    for profile in profiles:
-        cfg = _read_mapping(profile.path / "config.yaml")
-        for key in ("mcp_servers", "platform_toolsets", "plugins"):
-            if cfg.get(key) != union[key]:
-                raise SyncError(f"Post-write verification failed for {profile.name}:{key}")
-        env = _parse_env_file(profile.path / ".env")
-        if any(env.get(key) != value for key, value in env_union.items()):
-            raise SyncError(f"Post-write environment verification failed for {profile.name}")
-        for rel in skill_sources:
-            if not (profile.path / "skills" / rel / "SKILL.md").is_file():
-                raise SyncError(f"Post-write skill verification failed for {profile.name}:{rel}")
+    created_skills: list[Path] = []
+    replaced_skill_originals: list[tuple[Path, Path]] = []
+    try:
+        for _name, (path, content) in config_updates.items():
+            mode = path.stat().st_mode if path.exists() else None
+            _atomic_write(path, content, mode)
+
+        for _name, (path, content) in env_updates.items():
+            mode = path.stat().st_mode if path.exists() else 0o600
+            _atomic_write(path, content, mode)
+            secure_private_path(path, directory=False)
+
+        for name, rel_paths in missing_skills.items():
+            target_root = profile_by_name[name].path / "skills"
+            for rel in rel_paths:
+                target = target_root / rel
+                shutil.copytree(
+                    skill_sources[rel],
+                    target,
+                    ignore=_ignore_private_skill_files,
+                )
+                secure_private_path(target, directory=True, recursive=True)
+                created_skills.append(target)
+
+        for name, rel_paths in replacement_skills.items():
+            target_root = profile_by_name[name].path / "skills"
+            for rel in rel_paths:
+                target = target_root / rel
+                original = _replace_skill_tree(skill_sources[rel], target)
+                replaced_skill_originals.append((target, original))
+
+        # Fresh read-back proves the materialized state, not only the write plan.
+        for profile in profiles:
+            cfg = _read_mapping(profile.path / "config.yaml")
+            for key in ("mcp_servers", "platform_toolsets", "plugins"):
+                if cfg.get(key) != union[key]:
+                    raise SyncError(f"Post-write verification failed for {profile.name}:{key}")
+            env = _parse_env_file(profile.path / ".env")
+            if any(env.get(key) != value for key, value in env_union.items()):
+                raise SyncError(f"Post-write environment verification failed for {profile.name}")
+            forbidden = set(service_local_removals.get(profile.name, []))
+            if forbidden.intersection(env):
+                raise SyncError(
+                    f"Post-write service-local migration failed for {profile.name}: "
+                    + ", ".join(sorted(forbidden.intersection(env)))
+                )
+            for rel in skill_sources:
+                if not (profile.path / "skills" / rel / "SKILL.md").is_file():
+                    raise SyncError(f"Post-write skill verification failed for {profile.name}:{rel}")
+                if _skill_tree_digest(profile.path / "skills" / rel) != _skill_tree_digest(
+                    skill_sources[rel]
+                ):
+                    raise SyncError(
+                        f"Post-write skill-content verification failed for "
+                        f"{profile.name}:{rel.as_posix()}"
+                    )
+    except BaseException as exc:
+        rollback_errors: list[str] = []
+        allowed_skill_roots = {
+            (profile.path / "skills").resolve(strict=False) for profile in profiles
+        }
+        for target, original in reversed(replaced_skill_originals):
+            try:
+                resolved_target = target.resolve(strict=False)
+                if not any(root in resolved_target.parents for root in allowed_skill_roots):
+                    raise SyncError(f"Unsafe skill replacement rollback target: {target}")
+                if target.exists():
+                    shutil.rmtree(target)
+                os.replace(original, target)
+                secure_private_path(target, directory=True, recursive=True)
+            except Exception as rollback_exc:
+                rollback_errors.append(f"{target}: {rollback_exc}")
+        for target in reversed(created_skills):
+            try:
+                resolved_target = target.resolve(strict=False)
+                if not any(root in resolved_target.parents for root in allowed_skill_roots):
+                    raise SyncError(f"Unsafe skill rollback target: {target}")
+                shutil.rmtree(target)
+            except Exception as rollback_exc:
+                rollback_errors.append(f"{target}: {rollback_exc}")
+        for path, content in reversed(list(originals.items())):
+            try:
+                if content is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    _atomic_write(path, content, None)
+            except Exception as rollback_exc:
+                rollback_errors.append(f"{path}: {rollback_exc}")
+        secure_private_path(backup_root, directory=True, recursive=True)
+        message = f"Capability sync failed and was rolled back: {exc}"
+        if rollback_errors:
+            message += "; rollback errors: " + "; ".join(rollback_errors)
+        raise SyncError(message) from exc
+
+    for _target, original in replaced_skill_originals:
+        if original.exists():
+            shutil.rmtree(original)
+    secure_private_path(backup_root, directory=True, recursive=True)
 
     return report
 
@@ -420,14 +760,23 @@ def synchronize(root: Path, *, apply: bool = False) -> SyncReport:
 def _print_report(report: SyncReport, *, applied: bool) -> None:
     mode = "Applied" if applied else "Dry run"
     print(f"{mode}: {len(report.profiles)} profile(s)")
-    print(f"  MCP servers enabled everywhere: {len(report.mcp_servers)}")
+    print(f"  MCP server states synchronized everywhere: {len(report.mcp_servers)}")
     print(f"  Installed skill paths everywhere: {len(report.skill_paths)}")
     print(f"  Static account/env keys everywhere: {len(report.env_keys)}")
+    print(f"  Known profile-local/service/local env keys unmanaged: {len(report.unmanaged_env_keys)}")
+    print(
+        f"  Service-local env keys {'removed' if applied else 'to remove'} from named profiles: "
+        f"{sum(len(keys) for keys in report.removed_service_local.values())}"
+    )
     print(f"  Config files {'changed' if applied else 'to change'}: {len(report.changed_configs)}")
     print(f"  Env files {'changed' if applied else 'to change'}: {len(report.changed_envs)}")
     print(
         f"  Skill copies {'made' if applied else 'to make'}: "
         f"{sum(len(paths) for paths in report.copied_skills.values())}"
+    )
+    print(
+        f"  Default-authorized skill replacements {'made' if applied else 'to make'}: "
+        f"{sum(len(paths) for paths in report.replaced_skills.values())}"
     )
     if report.backup_dir:
         print(f"  Recoverable backup: {report.backup_dir}")
@@ -436,6 +785,22 @@ def _print_report(report: SyncReport, *, applied: bool) -> None:
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="write the planned reconciliation")
+    parser.add_argument(
+        "--resolve-env-conflicts-from-default",
+        action="store_true",
+        help=(
+            "explicitly authorize canonical default shared env values to replace "
+            "conflicting shared values in named profiles"
+        ),
+    )
+    parser.add_argument(
+        "--resolve-skill-conflicts-from-default",
+        action="store_true",
+        help=(
+            "explicitly authorize the canonical default profile to replace "
+            "conflicting public skill code while preserving profile-local secret files"
+        ),
+    )
     parser.add_argument(
         "--root",
         type=Path,
@@ -451,7 +816,12 @@ def main(argv: Iterable[str] | None = None) -> int:
         root = args.root
 
     try:
-        report = synchronize(root, apply=args.apply)
+        report = synchronize(
+            root,
+            apply=args.apply,
+            resolve_env_conflicts_from_default=args.resolve_env_conflicts_from_default,
+            resolve_skill_conflicts_from_default=args.resolve_skill_conflicts_from_default,
+        )
     except SyncError as exc:
         print(f"Profile capability sync refused: {exc}", file=sys.stderr)
         return 2

@@ -16,12 +16,14 @@ encoding (the fix) instead of relying on the locale default.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
 import hermes_cli.auth as auth
+from hermes_security import verify_private_path
 
 
 # --- helpers ---------------------------------------------------------------
@@ -133,6 +135,15 @@ class TestAuthStoreEncodingRoundTrip:
 
         loaded = auth._load_auth_store(auth_path)
         assert loaded["providers"]["x"]["label"] == "café"
+
+    @pytest.mark.windows_only
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows DACL test")
+    def test_save_auth_store_has_private_windows_acl(self, hermes_home):
+        saved = auth._save_auth_store({"providers": {}})
+
+        assert saved == hermes_home / "auth.json"
+        verify_private_path(saved, directory=False)
+        verify_private_path(hermes_home, directory=True)
 
 
 # --- the fix: readers pass an explicit encoding ---------------------------
@@ -353,4 +364,3 @@ class TestAuthJsonSiblingReaders:
         assert nous.get("agent_key") == "k"
         # The non-ASCII label round-trips intact.
         assert nous.get("label") == "工作账号"
-

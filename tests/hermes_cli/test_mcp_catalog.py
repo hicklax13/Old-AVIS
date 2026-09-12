@@ -120,6 +120,7 @@ class TestManifestParsing:
         assert e.transport.command == "npx"
         assert e.transport.args == ["-y", "demo-mcp"]
         assert e.auth.type == "none"
+        assert e.trust is None
         assert e.install is None
         assert e.suggest is None
 
@@ -219,6 +220,24 @@ class TestManifestParsing:
         from hermes_cli.mcp_catalog import CatalogError, _parse_manifest
 
         with pytest.raises(CatalogError, match="MCP_DEMO_API_KEY"):
+            _parse_manifest(path)
+
+    def test_trust_tier_parsed_and_written(self, catalog_dir):
+        body = _basic_manifest(trust="UNTRUSTED")
+        _write_manifest(catalog_dir, "demo", body)
+        from hermes_cli.mcp_catalog import _build_server_config
+
+        entry = _entry("demo")
+        assert entry.trust == "untrusted"
+        assert _build_server_config(entry, None)["trust"] == "untrusted"
+
+    def test_invalid_trust_tier_rejected(self, catalog_dir):
+        path = _write_manifest(
+            catalog_dir, "demo", _basic_manifest(trust="trusted-ish")
+        )
+        from hermes_cli.mcp_catalog import CatalogError, _parse_manifest
+
+        with pytest.raises(CatalogError, match="trust must be"):
             _parse_manifest(path)
 
 

@@ -903,9 +903,16 @@ def test_shared_store_write_and_read_roundtrip(shared_store_env):
     path = _nous_shared_store_path()
     assert path.is_file()
 
-    # Permissions should be 0600 where the platform supports it.
-    mode = path.stat().st_mode & 0o777
-    assert mode == 0o600 or mode == 0o644  # 0o644 on platforms without chmod
+    if sys.platform == "win32":
+        from hermes_security import verify_private_path
+
+        verify_private_path(path, directory=False)
+        verify_private_path(path.parent, directory=True)
+
+    # POSIX mode bits are not the Windows access-control boundary.
+    if sys.platform != "win32":
+        mode = path.stat().st_mode & 0o777
+        assert mode == 0o600
 
     loaded = _read_shared_nous_state()
     assert loaded is not None

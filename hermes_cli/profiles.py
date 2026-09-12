@@ -45,6 +45,7 @@ from hermes_constants import (
     mark_named_profile_deleted,
     named_profile_is_deleted,
 )
+from hermes_security import secure_private_directory, secure_private_path
 
 logger = logging.getLogger(__name__)
 
@@ -1250,6 +1251,9 @@ def create_profile(
                 f"Source profile '{clone_from or 'active'}' does not exist at {source_dir}"
             )
 
+    # The profile root is a credential/state boundary. Protect its parent
+    # before copytree/mkdir can create children with inherited broad access.
+    secure_private_directory(profile_dir.parent)
     if clone_all and source_dir:
         # Full copy of source profile (exclude sibling ~/.hermes/profiles/)
         shutil.copytree(
@@ -1263,7 +1267,7 @@ def create_profile(
             (profile_dir / stale).unlink(missing_ok=True)
     else:
         # Bootstrap directory structure
-        profile_dir.mkdir(parents=True, exist_ok=True)
+        secure_private_directory(profile_dir)
         for subdir in _PROFILE_DIRS:
             (profile_dir / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -1321,6 +1325,11 @@ def create_profile(
             os.chmod(str(env_path), 0o600)
         except OSError:
             pass  # best-effort — save_env_value creates the file on demand
+    if env_path.exists():
+        # The profile root protects inherited children, but .env is also an
+        # independently copied/published credential file. Give it its own
+        # protected read-back boundary so a later move cannot weaken it.
+        secure_private_path(env_path, directory=False)
 
     # Seed a default SOUL.md so the user has a file to customize immediately.
     # Skipped when the profile already has one (from --clone / --clone-all).
@@ -1374,6 +1383,7 @@ def create_profile(
     # unit-generation paths handle gateway lifecycle.
     _maybe_register_gateway_service(canon)
 
+    secure_private_path(profile_dir, directory=True, recursive=True)
     return profile_dir
 
 
@@ -1462,6 +1472,7 @@ def backfill_profile_envs(quiet: bool = False) -> List[str]:
                     encoding="utf-8",
                 )
             os.chmod(str(env_path), 0o600)
+            secure_private_path(env_path, directory=False)
             backfilled.append(entry.name)
         except OSError as e:
             if not quiet:
@@ -2317,7 +2328,7 @@ def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
         raise FileExistsError(f"Profile '{canon}' already exists at {profile_dir}")
 
     profiles_root = _get_profiles_root()
-    profiles_root.mkdir(parents=True, exist_ok=True)
+    secure_private_directory(profiles_root)
 
     with tempfile.TemporaryDirectory(prefix="hermes_profile_import_") as tmpdir:
         staging_root = Path(tmpdir)
@@ -2336,6 +2347,10 @@ def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
 
         shutil.move(str(final_source), str(profile_dir))
 
+    # A same-volume move can preserve explicit/inherited ACLs from the broad
+    # temporary extraction directory. Normalize and read back the complete
+    # imported profile, not only its new root.
+    secure_private_path(profile_dir, directory=True, recursive=True)
     return profile_dir
 
 

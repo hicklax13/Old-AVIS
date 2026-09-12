@@ -1455,6 +1455,7 @@ export interface McpServerSummary {
   args: string[]
   url: string | null
   enabled: boolean
+  blocked_reason: string | null
   tools: string[] | null
 }
 

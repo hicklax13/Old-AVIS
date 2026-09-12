@@ -3,6 +3,7 @@
 import json
 import stat
 import sys
+import time
 from io import BytesIO
 from unittest.mock import patch, MagicMock
 
@@ -389,6 +390,110 @@ class TestBuildOAuthAuth:
 
         assert result is False
         assert provider.context.current_tokens is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_omissions_preserve_refresh_token_and_scope(
+        self, tmp_path, monkeypatch
+    ):
+        """RFC 6749 refresh omissions mean the prior values remain valid."""
+        import httpx
+        from mcp.shared.auth import OAuthToken
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        _set_interactive_stdin(monkeypatch)
+        provider = build_oauth_auth(
+            "refresh-preserve",
+            "https://example.com/mcp",
+            {"scope": "read write"},
+        )
+        assert provider is not None
+        provider.context.current_tokens = OAuthToken.model_validate(
+            {
+                "access_token": "old-access",
+                "token_type": "Bearer",
+                "refresh_token": "stable-refresh",
+                "scope": "read write",
+                "expires_in": 10,
+            }
+        )
+
+        result = await provider._handle_refresh_response(
+            httpx.Response(
+                200,
+                json={
+                    "access_token": "new-access",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                },
+            )
+        )
+
+        assert result is True
+        tokens = provider.context.current_tokens
+        assert tokens is not None
+        assert tokens.access_token == "new-access"
+        assert tokens.refresh_token == "stable-refresh"
+        assert tokens.scope == "read write"
+        token_path = tmp_path / "mcp-tokens" / "refresh-preserve.json"
+        persisted = json.loads(token_path.read_text(encoding="utf-8"))
+        assert persisted["refresh_token"] == "stable-refresh"
+        assert persisted["scope"] == "read write"
+        assert persisted["expires_at"] > time.time()
+        if sys.platform == "win32":
+            from hermes_security import verify_private_path
+
+            verify_private_path(token_path, directory=False)
+
+    @pytest.mark.asyncio
+    async def test_refresh_supplied_rotation_replaces_refresh_token_and_scope(
+        self, tmp_path, monkeypatch
+    ):
+        """A provider-supplied rotation must win over the prior token state."""
+        import httpx
+        from mcp.shared.auth import OAuthToken
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        _set_interactive_stdin(monkeypatch)
+        provider = build_oauth_auth(
+            "refresh-rotate",
+            "https://example.com/mcp",
+            {"scope": "read"},
+        )
+        assert provider is not None
+        provider.context.current_tokens = OAuthToken.model_validate(
+            {
+                "access_token": "old-access",
+                "token_type": "Bearer",
+                "refresh_token": "old-refresh",
+                "scope": "read",
+            }
+        )
+
+        result = await provider._handle_refresh_response(
+            httpx.Response(
+                200,
+                json={
+                    "access_token": "new-access",
+                    "token_type": "Bearer",
+                    "refresh_token": "rotated-refresh",
+                    "scope": "read write",
+                    "expires_in": 1800,
+                },
+            )
+        )
+
+        assert result is True
+        tokens = provider.context.current_tokens
+        assert tokens is not None
+        assert tokens.refresh_token == "rotated-refresh"
+        assert tokens.scope == "read write"
+        persisted = json.loads(
+            (tmp_path / "mcp-tokens" / "refresh-rotate.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert persisted["refresh_token"] == "rotated-refresh"
+        assert persisted["scope"] == "read write"
 
 
 # ---------------------------------------------------------------------------
@@ -1217,6 +1322,61 @@ class TestPoisonClientRegistration:
         # Tokens are intentionally preserved.
         assert (d / "srv.json").read_text() == '{"access_token": "keep-me"}'
 
+        if sys.platform == "win32":
+            from hermes_security import verify_private_path
+
+            verify_private_path(d / "srv.client.json.bak", directory=False)
+
+    def test_poison_keeps_live_registration_when_private_backup_fails(
+        self, tmp_path, monkeypatch
+    ):
+        from hermes_security import PrivatePathError
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        storage = HermesTokenStorage("srv")
+        d = tmp_path / "mcp-tokens"
+        d.mkdir(parents=True)
+        client = d / "srv.client.json"
+        metadata = d / "srv.meta.json"
+        client.write_text('{"client_id": "still-live"}')
+        metadata.write_text('{"issuer": "https://example.test"}')
+
+        with patch(
+            "tools.mcp_oauth.create_private_temp_file",
+            side_effect=PrivatePathError("ACL unavailable"),
+        ):
+            removed = storage.poison_client_registration()
+
+        assert removed is False
+        assert client.exists()
+        assert metadata.exists()
+
+    def test_poison_removes_published_backup_when_acl_readback_fails(
+        self, tmp_path, monkeypatch
+    ):
+        from hermes_security import PrivatePathError
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        storage = HermesTokenStorage("srv")
+        token_dir = tmp_path / "mcp-tokens"
+        token_dir.mkdir(parents=True)
+        client = token_dir / "srv.client.json"
+        metadata = token_dir / "srv.meta.json"
+        backup = token_dir / "srv.client.json.bak"
+        client.write_text('{"client_id": "still-live"}')
+        metadata.write_text('{"issuer": "https://example.test"}')
+
+        with patch(
+            "tools.mcp_oauth._secure_windows_credential_acl",
+            side_effect=[None, PrivatePathError("backup ACL readback failed")],
+        ):
+            removed = storage.poison_client_registration()
+
+        assert removed is False
+        assert client.exists()
+        assert metadata.exists()
+        assert not backup.exists()
+
 
 def test_wait_for_callback_port_in_use_reports_clear_error(monkeypatch):
     """A busy loopback callback port surfaces a clear 'already in use' error,
@@ -1238,14 +1398,13 @@ def test_wait_for_callback_port_in_use_reports_clear_error(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Figma remote MCP DCR allowlist workarounds
+# Figma remote MCP identity safety
 # ---------------------------------------------------------------------------
 
 
-def test_figma_provider_defaults_set_allowlisted_client_name():
+def test_figma_provider_defaults_never_impersonate_an_allowlisted_client():
     from tools.mcp_oauth import (
         apply_oauth_provider_defaults,
-        _FIGMA_DCR_CLIENT_NAME,
         _FIGMA_DEFAULT_SCOPE,
     )
 
@@ -1254,8 +1413,25 @@ def test_figma_provider_defaults_set_allowlisted_client_name():
         server_name="figma",
         server_url="https://mcp.figma.com/mcp",
     )
-    assert cfg["client_name"] == _FIGMA_DCR_CLIENT_NAME
+    assert "client_name" not in cfg
     assert cfg["scope"] == _FIGMA_DEFAULT_SCOPE
+
+
+def test_figma_registration_403_explains_official_path_without_spoofing():
+    from tools.mcp_oauth import humanize_oauth_registration_error
+
+    message = humanize_oauth_registration_error(
+        "figma",
+        RuntimeError("HTTP 403: client registration forbidden"),
+        server_url="https://mcp.figma.com/mcp",
+    )
+
+    assert message is not None
+    assert "official MCP catalog" in message
+    assert "will not register under another client's identity" in message
+    assert "developers.figma.com" in message
+    assert "Claude Code" not in message
+    assert '"Codex"' not in message
 
 
 def test_humanize_non_registration_403_passthrough():

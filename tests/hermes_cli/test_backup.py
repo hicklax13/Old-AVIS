@@ -184,19 +184,19 @@ class TestBackup:
 
         import hermes_cli.backup as backup_mod
         staged_dirs = []
-        real_ntf = backup_mod.tempfile.NamedTemporaryFile
+        real_create_private_temp_file = backup_mod.create_private_temp_file
 
-        def _spy(*a, **kw):
-            staged_dirs.append(kw.get("dir"))
-            return real_ntf(*a, **kw)
+        def _spy(directory, **kwargs):
+            staged_dirs.append(Path(directory))
+            return real_create_private_temp_file(directory, **kwargs)
 
-        monkeypatch.setattr(backup_mod.tempfile, "NamedTemporaryFile", _spy)
+        monkeypatch.setattr(backup_mod, "create_private_temp_file", _spy)
         backup_mod.run_backup(args)
 
         # At least one .db was staged, and every staging call targeted the
         # output zip's directory rather than the system temp default.
         assert staged_dirs, "no SQLite snapshot was staged"
-        assert all(d == str(out_dir) for d in staged_dirs), staged_dirs
+        assert all(d == out_dir for d in staged_dirs), staged_dirs
 
     def test_pre_update_db_snapshots_staged_beside_output_zip(self, tmp_path, monkeypatch):
         """The pre-update/pre-migration zip path (_write_full_zip_backup) must
@@ -213,18 +213,18 @@ class TestBackup:
 
         import hermes_cli.backup as backup_mod
         staged_dirs = []
-        real_ntf = backup_mod.tempfile.NamedTemporaryFile
+        real_create_private_temp_file = backup_mod.create_private_temp_file
 
-        def _spy(*a, **kw):
-            staged_dirs.append(kw.get("dir"))
-            return real_ntf(*a, **kw)
+        def _spy(directory, **kwargs):
+            staged_dirs.append(Path(directory))
+            return real_create_private_temp_file(directory, **kwargs)
 
-        monkeypatch.setattr(backup_mod.tempfile, "NamedTemporaryFile", _spy)
+        monkeypatch.setattr(backup_mod, "create_private_temp_file", _spy)
         result = backup_mod._write_full_zip_backup(out_zip, hermes_home)
 
         assert result is not None
         assert staged_dirs, "no SQLite snapshot was staged"
-        assert all(d == str(out_zip.parent) for d in staged_dirs), staged_dirs
+        assert all(d == out_zip.parent for d in staged_dirs), staged_dirs
 
 
 
@@ -1057,7 +1057,8 @@ class TestProfileRestoration:
         run_import(args)
 
         # Only valid profile should get a wrapper
-        assert (wrapper_dir / "valid").exists()
+        wrapper_name = "valid.bat" if os.name == "nt" else "valid"
+        assert (wrapper_dir / wrapper_name).exists()
         assert not (wrapper_dir / "empty").exists()
 
 
@@ -1492,7 +1493,10 @@ class TestQuickSnapshotProjectsKanban:
         monkeypatch.setattr(bk, "_safe_copy_db", _spy)
         snap_id = create_quick_snapshot(hermes_home=hermes_home)
         # The board db was copied via _safe_copy_db (not raw copy).
-        assert any(s.endswith("boards/work/kanban.db") for s in called["db"]), called["db"]
+        assert any(
+            Path(s).as_posix().endswith("boards/work/kanban.db")
+            for s in called["db"]
+        ), called["db"]
         copy = hermes_home / "state-snapshots" / snap_id / "kanban" / "boards" / "work" / "kanban.db"
         rows = sqlite3.connect(str(copy)).execute("SELECT * FROM tasks").fetchall()
         assert rows == [("w1", "ship")]
@@ -1847,10 +1851,14 @@ class TestMemoryProviderExternalPaths:
         assert restored.exists()
         assert restored.read_text() == '{"peer":"bob"}'
         # Credential-shaped file tightened.
-        assert (restored.stat().st_mode & 0o777) == 0o600
+        if os.name == "nt":
+            from hermes_security import verify_private_path
+
+            verify_private_path(restored, directory=False)
+        else:
+            assert (restored.stat().st_mode & 0o777) == 0o600
         # External state did NOT leak into HERMES_HOME.
         assert not (hermes_home / "_external").exists()
-
 
 
 

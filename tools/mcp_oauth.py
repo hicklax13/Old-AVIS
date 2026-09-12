@@ -61,6 +61,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from hermes_constants import secure_parent_dir
+from hermes_security import (
+    create_private_file,
+    create_private_temp_file,
+    secure_private_directory,
+    secure_private_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,64 +220,10 @@ def _secure_windows_credential_acl(path: Path, *, directory: bool) -> None:
     repository's broader read ACL. A protected DACL on the directory also
     makes future OAuth state inherit the same private boundary.
     """
-    if os.name != "nt" or not path.exists():
-        return
-
-    try:
-        import ntsecuritycon
-        import win32api
-        import win32con
-        import win32security
-    except ImportError as exc:  # pragma: no cover - pywin32 is a Windows dep
-        logger.warning("Cannot restrict Windows OAuth credential ACL: %s", exc)
-        return
-
-    try:
-        process_token = win32security.OpenProcessToken(
-            win32api.GetCurrentProcess(), win32con.TOKEN_QUERY
-        )
-        try:
-            current_user = win32security.GetTokenInformation(
-                process_token, win32security.TokenUser
-            )[0]
-        finally:
-            process_token.Close()
-        system = win32security.ConvertStringSidToSid("S-1-5-18")
-        inherit_flags = 0
-        if directory:
-            inherit_flags = (
-                win32security.OBJECT_INHERIT_ACE
-                | win32security.CONTAINER_INHERIT_ACE
-            )
-
-        acl = win32security.ACL()
-        for sid in (current_user, system):
-            acl.AddAccessAllowedAceEx(
-                win32security.ACL_REVISION,
-                inherit_flags,
-                ntsecuritycon.FILE_ALL_ACCESS,
-                sid,
-            )
-
-        security_info = (
-            win32security.DACL_SECURITY_INFORMATION
-            | win32security.PROTECTED_DACL_SECURITY_INFORMATION
-        )
-        win32security.SetNamedSecurityInfo(
-            str(path),
-            win32security.SE_FILE_OBJECT,
-            security_info,
-            None,
-            None,
-            acl,
-            None,
-        )
-    except OSError as exc:
-        # Persistence remains available if a locked-down enterprise host
-        # refuses DACL changes, but the failure is visible to operators.
-        logger.warning(
-            "Failed to restrict OAuth credential ACL for %s: %s", path, exc
-        )
+    if path.exists():
+        # Fail closed: a token write is not complete until its final DACL can
+        # be read back as current-user + SYSTEM only.
+        secure_private_path(path, directory=directory)
 
 
 def _find_free_port() -> int:
@@ -505,7 +457,7 @@ def _write_json(path: Path, data: dict) -> None:
     tokens to other local users between create and chmod. Mirrors the fix
     in ``agent/google_oauth.py`` (#19673).
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    secure_private_directory(path.parent)
     # Tighten parent dir to 0o700 so siblings can't traverse to the creds.
     # No-op on Windows (POSIX mode bits aren't enforced); ignore failures.
     # secure_parent_dir refuses to chmod /, top-level dirs, or the
@@ -514,17 +466,18 @@ def _write_json(path: Path, data: dict) -> None:
     _secure_windows_credential_acl(path.parent, directory=True)
     # Per-process random suffix avoids collisions between concurrent
     # writers and stale leftovers from a prior crashed write.
-    tmp = path.with_suffix(f".tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    tmp = create_private_temp_file(
+        path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
     try:
-        fd = os.open(
-            str(tmp),
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            stat.S_IRUSR | stat.S_IWUSR,
-        )
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, default=str)
             fh.flush()
             os.fsync(fh.fileno())
+        if path.exists():
+            secure_private_path(path, directory=False)
         os.replace(tmp, path)
         _secure_windows_credential_acl(path, directory=False)
     except OSError:
@@ -765,22 +718,20 @@ class HermesTokenStorage:
         if not snapshot:
             return
         token_dir = _get_token_dir(self._hermes_home)
-        token_dir.mkdir(parents=True, exist_ok=True)
+        secure_private_directory(token_dir)
         secure_parent_dir(token_dir / "credential-state")
         _secure_windows_credential_acl(token_dir, directory=True)
-        for fname, data in snapshot.items():
-            path = token_dir / fname
-            try:
-                fd = os.open(
-                    str(path),
-                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-                    stat.S_IRUSR | stat.S_IWUSR,
-                )
-                with os.fdopen(fd, "wb") as fh:
+        try:
+            for fname, data in snapshot.items():
+                path = token_dir / fname
+                create_private_file(path)
+                with open(path, "wb") as fh:
                     fh.write(data)
                 _secure_windows_credential_acl(path, directory=False)
-            except OSError as exc:
-                logger.warning("Failed to restore OAuth state %s: %s", fname, exc)
+        except BaseException:
+            # A partially restored credential set is unsafe and unusable.
+            self.remove()
+            raise
 
     def poison_client_registration(self) -> bool:
         """Discard a dead dynamically-registered client so it gets re-created.
@@ -804,10 +755,33 @@ class HermesTokenStorage:
         if not client_path.exists():
             return False
         backup = client_path.with_name(client_path.name + ".bak")
+        tmp: Path | None = None
+        backup_published = False
         try:
-            backup.write_bytes(client_path.read_bytes())
-        except OSError as exc:  # non-fatal — proceed with the removal anyway
+            secure_private_directory(backup.parent)
+            if backup.exists():
+                secure_private_path(backup, directory=False)
+            tmp = create_private_temp_file(
+                backup.parent,
+                prefix=f".{backup.name}.",
+                suffix=".tmp",
+            )
+            tmp.write_bytes(client_path.read_bytes())
+            _secure_windows_credential_acl(tmp, directory=False)
+            os.replace(tmp, backup)
+            backup_published = True
+            tmp = None
+            _secure_windows_credential_acl(backup, directory=False)
+        except OSError as exc:
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
+            if backup_published:
+                # The live registration remains authoritative when the
+                # recovery copy cannot be proven private. Never leave a
+                # possibly broad client-secret backup behind.
+                backup.unlink(missing_ok=True)
             logger.warning("Could not back up client info at %s: %s", client_path, exc)
+            return False
         client_path.unlink(missing_ok=True)
         self._meta_path().unlink(missing_ok=True)
         logger.warning(
@@ -1349,6 +1323,18 @@ def _get_hermes_oauth_provider_class() -> type | None:
             try:
                 content = await response.aread()
                 token_response = OAuthToken.model_validate_json(content)
+                # RFC 6749 section 6: an omitted refresh token means the
+                # authorization server did not rotate it, and an omitted scope
+                # means the originally granted scope is unchanged. Carry both
+                # fields forward before replacing and persisting the complete
+                # token object. Provider-supplied values remain authoritative.
+                prior = self.context.current_tokens
+                if token_response.refresh_token is None and prior is not None:
+                    token_response.refresh_token = getattr(
+                        prior, "refresh_token", None
+                    )
+                if token_response.scope is None and prior is not None:
+                    token_response.scope = getattr(prior, "scope", None)
                 self.context.current_tokens = token_response
                 self.context.update_token_expiry(token_response)
                 await self.context.storage.set_tokens(token_response)
@@ -1734,17 +1720,11 @@ def _resolve_redirect_uri(cfg: dict, port: int) -> str:
     return f"http://{host}:{port}/callback"
 
 
-# Figma's remote MCP (https://mcp.figma.com/mcp) implement RFC 7591 DCR as a
-# *name allowlist*, not open registration. POST /v1/oauth/mcp/register returns
-# 403 Forbidden for any client_name outside a short fixed set. Empirically (as
-# of 2026-07, verified by live call against api.figma.com):
-#   "Claude Code" → 200
-#   "Codex"       → 200
-#   "Hermes Agent" / "Hermes" / "Cursor" / "VS Code" / … → 403
-# pi-figma-remote-auth and similar tools work around this the same way — register
-# under an allowlisted name so the browser flow can start. User can still pin a
-# different name via oauth.client_name if Figma ever admits one.
-_FIGMA_DCR_CLIENT_NAME = "Claude Code"
+# Figma's hosted MCP limits access to clients in its official catalog. Hermes
+# must not claim another catalog client's identity to pass Dynamic Client
+# Registration. Keep only protocol-level defaults here; an officially issued
+# client_id/client_secret may still be supplied explicitly if Figma admits
+# Hermes in the future.
 _FIGMA_DEFAULT_SCOPE = "mcp:connect"
 
 
@@ -1772,21 +1752,14 @@ def apply_oauth_provider_defaults(
     server_name: str = "",
     server_url: str | None = None,
 ) -> dict:
-    """Mutate *cfg* with provider-specific OAuth workarounds. Returns *cfg*.
+    """Mutate *cfg* with provider-specific protocol defaults. Returns *cfg*.
 
     Call this before :func:`_build_client_metadata` /
     :func:`_maybe_preregister_client`. Only fills keys the user left unset —
-    an explicit ``oauth.client_name`` / ``oauth.scope`` always wins.
+    an explicit ``oauth.client_name`` / ``oauth.scope`` always wins. This must
+    never synthesize the identity of another OAuth client.
     """
     if _is_figma_remote_mcp(server_name, server_url):
-        if not cfg.get("client_name"):
-            cfg["client_name"] = _FIGMA_DCR_CLIENT_NAME
-            logger.info(
-                "MCP OAuth '%s': Figma DCR allowlist — registering as "
-                "client_name=%r (override via oauth.client_name)",
-                server_name or server_url,
-                _FIGMA_DCR_CLIENT_NAME,
-            )
         if not cfg.get("scope"):
             cfg["scope"] = _FIGMA_DEFAULT_SCOPE
         # Figma's register response advertises token_endpoint_auth_method=none
@@ -1950,9 +1923,8 @@ def humanize_oauth_registration_error(
     Returns a humanized message when the error is a registration 403/Forbidden,
     else ``None`` so the caller keeps the original exception text.
 
-    Figma's remote MCP gates DCR on exact ``client_name``. Hermes auto-sets
-    ``Claude Code`` (known-good); this message fires when the user overrode
-    that with something Figma still rejects, or an older Hermes is running.
+    Figma's remote MCP accepts only officially catalog-listed clients. Hermes
+    deliberately refuses to impersonate one of those clients.
     """
     msg = str(exc)
     lowered = msg.lower()
@@ -1971,13 +1943,12 @@ def humanize_oauth_registration_error(
 
     if _is_figma_remote_mcp(server_name, server_url):
         return (
-            f"'{server_name}' is Figma's remote MCP — DCR is allowlisted by "
-            f"exact client_name (\"{_FIGMA_DCR_CLIENT_NAME}\" and \"Codex\" "
-            "work; most other names 403). Hermes defaults to "
-            f"client_name: {_FIGMA_DCR_CLIENT_NAME!r} automatically. If you "
-            "set oauth.client_name yourself, change it to one of those, or "
-            "clear it and re-run:\n"
-            f"  hermes mcp login {server_name}"
+            f"'{server_name}' is Figma's remote MCP, which Figma limits to "
+            "clients in its official MCP catalog. Hermes is not currently "
+            "listed and will not register under another client's identity. "
+            "Keep this server disabled until Figma approves Hermes, or join "
+            "Figma's official new-client waitlist: "
+            "https://developers.figma.com/docs/rest-api/scopes/#figma-mcp-server"
         )
 
     return (

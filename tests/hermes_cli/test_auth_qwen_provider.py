@@ -7,6 +7,7 @@ resolve_qwen_runtime_credentials, get_qwen_auth_status.
 
 import json
 import stat
+import sys
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -94,6 +95,16 @@ def test_qwen_cli_auth_path_returns_expected_location():
 # _save_qwen_cli_tokens
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.windows_only
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACL test")
+def test_save_qwen_tokens_has_private_windows_acl(qwen_env):
+    from hermes_security import verify_private_path
+
+    path = _save_qwen_cli_tokens(_make_qwen_tokens())
+
+    verify_private_path(path, directory=False)
+    verify_private_path(path.parent, directory=True)
 
 
 

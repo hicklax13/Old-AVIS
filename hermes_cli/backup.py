@@ -25,6 +25,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from hermes_constants import get_default_hermes_root, get_hermes_home, display_hermes_home
+from hermes_security import (
+    PrivatePathError,
+    create_private_file,
+    create_private_temp_file,
+    secure_private_directory,
+    secure_private_path,
+    verify_private_tree,
+)
 from utils import (
     _preserve_file_mode,
     _preserve_file_owner,
@@ -243,8 +251,17 @@ def _atomic_output_path(final_path: Path):
     )
     partial_path.unlink(missing_ok=True)
     try:
+        # A backup can be written outside HERMES_HOME. Pre-create and protect
+        # its staging file so broad parent inheritance never exposes contents.
+        create_private_file(partial_path)
         yield partial_path
+        # Replacing an existing Windows file can preserve the destination
+        # security descriptor. Tighten it first so either replace behavior
+        # (source ACL or destination ACL) remains private throughout publish.
+        if final_path.exists():
+            secure_private_path(final_path, directory=False)
         os.replace(partial_path, final_path)
+        secure_private_path(final_path, directory=False)
     except BaseException:
         partial_path.unlink(missing_ok=True)
         raise
@@ -386,6 +403,14 @@ def _safe_copy_db(
     conn = None
     backup_conn = None
     try:
+        # sqlite3.connect() creates a missing destination using platform
+        # defaults. On Windows that can inherit a broad parent DACL, so create
+        # it with the private descriptor in the kernel before SQLite writes a
+        # single page. Existing destinations are tightened before overwrite.
+        if dst.exists():
+            secure_private_path(dst, directory=False)
+        else:
+            create_private_file(dst)
         # Disable sqlite3's implicit busy wait so backup() progress callbacks
         # control the full locked-source deadline instead of adding the
         # connection's default timeout before each callback.
@@ -410,6 +435,7 @@ def _safe_copy_db(
             progress=_check_backup_progress,
             sleep=0.1,
         )
+        secure_private_path(dst, directory=False)
         return True
     except Exception as exc:
         logger.warning("SQLite safe copy failed for %s: %s", src, exc)
@@ -712,7 +738,14 @@ def _safe_restore_db(src: Path, dst: Path) -> bool:
     Falls back to the unlink+move approach on failure so restore never
     blocks on a transient error.
     """
+    dst_conn = None
+    src_conn = None
+    tmp: Optional[Path] = None
     try:
+        if dst.exists():
+            secure_private_path(dst, directory=False)
+        else:
+            create_private_file(dst)
         dst_conn = sqlite3.connect(str(dst))
         try:
             # Force a WAL checkpoint so the backup starts from a clean
@@ -721,19 +754,26 @@ def _safe_restore_db(src: Path, dst: Path) -> bool:
         except Exception:
             pass
         src_conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
-        try:
-            src_conn.backup(dst_conn)
-        finally:
-            src_conn.close()
+        src_conn.backup(dst_conn)
+        src_conn.close()
+        src_conn = None
         dst_conn.close()
+        dst_conn = None
         # Restore original file permissions from the snapshot
         try:
             mode = src.stat().st_mode
             dst.chmod(mode)
         except Exception:
             pass
+        secure_private_path(dst, directory=False)
         return True
     except Exception as exc:
+        for connection in (src_conn, dst_conn):
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
         logger.warning("SQLite safe restore failed for %s -> %s: %s", src, dst, exc)
         # Fallback: unlink+move (the old approach).  This still works for
         # the common case where no other process holds the DB open.
@@ -752,7 +792,11 @@ def _safe_restore_db(src: Path, dst: Path) -> bool:
                     dst, holders,
                 )
                 return False
-            tmp = dst.parent / f".{dst.name}.snap_restore"
+            tmp = create_private_temp_file(
+                dst.parent,
+                prefix=f".{dst.name}.snap-restore-",
+                suffix=".tmp",
+            )
             shutil.copy2(src, tmp)
             dst.unlink(missing_ok=True)
             # Drop the destination's sidecars before installing the
@@ -767,9 +811,16 @@ def _safe_restore_db(src: Path, dst: Path) -> bool:
             # ``_EXCLUDED_SUFFIXES``, applied to the restore destination.
             for _sidecar_suffix in ("-wal", "-shm", "-journal"):
                 dst.with_name(dst.name + _sidecar_suffix).unlink(missing_ok=True)
-            shutil.move(str(tmp), str(dst))
+            os.replace(tmp, dst)
+            tmp = None
+            secure_private_path(dst, directory=False)
             return True
         except Exception as exc2:
+            try:
+                if tmp is not None:
+                    tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
             logger.error("Fallback restore also failed for %s -> %s: %s", src, dst, exc2)
             return False
 
@@ -912,10 +963,11 @@ def _run_backup_locked(args, hermes_root: Path) -> None:
                     # temp file lives on the same filesystem.  The system
                     # default (/tmp) may be a small tmpfs that cannot hold
                     # large databases, causing silent backup incompleteness.
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".db", delete=False, dir=str(out_path.parent)
-                    ) as tmp:
-                        tmp_db = Path(tmp.name)
+                    tmp_db = create_private_temp_file(
+                        out_path.parent,
+                        prefix=".hermes-db-",
+                        suffix=".db",
+                    )
                     if _safe_copy_db(abs_path, tmp_db):
                         zf.write(tmp_db, arcname=str(rel_path))
                         total_bytes += tmp_db.stat().st_size
@@ -1232,7 +1284,7 @@ def run_import(args) -> None:
 
         # Extract
         print(f"\nImporting {file_count} files ...")
-        hermes_root.mkdir(parents=True, exist_ok=True)
+        secure_private_directory(hermes_root)
 
         errors = []
         restored = 0
@@ -1260,16 +1312,19 @@ def run_import(args) -> None:
                     errors.append(f"  {member}: path traversal blocked")
                     continue
                 try:
-                    target.parent.mkdir(parents=True, exist_ok=True)
+                    # External provider state is credential-bearing too. Its
+                    # provider directory must be private before extraction,
+                    # and an existing explicit broad file must be tightened
+                    # before an in-place/replace writer can expose new bytes.
+                    secure_private_directory(target.parent)
+                    if target.exists():
+                        secure_private_path(target, directory=False)
                     _extract_member_atomically(zf, member, target, new_file_mode)
-                    # External provider configs commonly hold credentials.
-                    if target.suffix in {".json", ".env", ".conf"} or target.name in _SECRET_FILE_NAMES:
-                        try:
-                            os.chmod(target, 0o600)
-                        except OSError:
-                            pass
+                    secure_private_path(target, directory=False)
                     restored += 1
                     restored_external += 1
+                except PrivatePathError:
+                    raise
                 except (PermissionError, OSError) as exc:
                     errors.append(f"  {member}: {exc}")
                 if restored % 500 == 0:
@@ -1306,10 +1361,16 @@ def run_import(args) -> None:
 
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
+                secure_private_directory(target.parent)
+                if target.exists():
+                    secure_private_path(target, directory=False)
                 _extract_member_atomically(zf, member, target, new_file_mode)
-                if target.name in _SECRET_FILE_NAMES:
+                if target.name in _SECRET_FILE_NAMES and os.name != "nt":
                     os.chmod(target, 0o600)
+                secure_private_path(target, directory=False)
                 restored += 1
+            except PrivatePathError:
+                raise
             except (PermissionError, OSError) as exc:
                 errors.append(f"  {rel}: {exc}")
 
@@ -1386,6 +1447,12 @@ def run_import(args) -> None:
                 if any(profiles_dir.iterdir()):
                     print("\n  Profiles detected but aliases could not be created.")
                     print("  Run: hermes profile list  (after installing hermes)")
+
+        # Import is a credential-bearing recovery path.  Fail closed unless
+        # the complete restored tree now satisfies the same private boundary
+        # as ordinary runtime writers.
+        secure_private_path(hermes_root, directory=True, recursive=True)
+        verify_private_tree(hermes_root)
 
         # Guidance
         print()
@@ -1514,6 +1581,7 @@ def _create_quick_snapshot_locked(
     """
     home = hermes_home or get_hermes_home()
     root = _quick_snapshot_root(home)
+    secure_private_directory(root)
 
     def _too_large(path: Path, rel_name: str) -> bool:
         """True (and warn) when ``path`` exceeds the max_file_size cap."""
@@ -1548,6 +1616,7 @@ def _create_quick_snapshot_locked(
     staging_dir = root / f".{snap_id}.{os.getpid()}.partial"
     shutil.rmtree(staging_dir, ignore_errors=True)
     staging_dir.mkdir(parents=True, exist_ok=False)
+    secure_private_path(staging_dir, directory=True)
     logger.info("quick snapshot phase=copy status=started id=%s", snap_id)
 
     manifest: Dict[str, int] = {}  # rel_path -> file size
@@ -1678,7 +1747,9 @@ def _create_quick_snapshot_locked(
     with open(staging_dir / "manifest.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
+    secure_private_path(staging_dir, directory=True, recursive=True)
     os.replace(staging_dir, snap_dir)
+    verify_private_tree(snap_dir)
 
     # Auto-prune. Defaults preserve historical manual /snapshot behavior; callers
     # with known high-churn safety snapshots (for example pre-update) can pass a
@@ -1752,6 +1823,7 @@ def restore_quick_snapshot(
     """
     home = hermes_home or get_hermes_home()
     root = _quick_snapshot_root(home)
+    secure_private_directory(home)
 
     # Security: reject snapshot_id values that contain path separators or
     # traversal sequences so that `root / snapshot_id` stays inside root.
@@ -1798,7 +1870,7 @@ def restore_quick_snapshot(
         if not src.exists():
             continue
 
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        secure_private_directory(dst.parent)
 
         try:
             if dst.suffix == ".db":
@@ -1806,10 +1878,16 @@ def restore_quick_snapshot(
                 # (gateway, dashboard, another CLI session) see the
                 # restored data instead of continuing to serve stale
                 # cached pages from a replaced inode (issue #65942).
-                _safe_restore_db(src, dst)
+                if not _safe_restore_db(src, dst):
+                    raise OSError(f"SQLite restore failed for {rel}")
             else:
+                if dst.exists():
+                    secure_private_path(dst, directory=False)
                 shutil.copy2(src, dst)
+            secure_private_path(dst, directory=False)
             restored += 1
+        except PrivatePathError:
+            raise
         except (OSError, PermissionError) as exc:
             logger.error("Failed to restore %s: %s", rel, exc)
 
@@ -1910,8 +1988,13 @@ def restore_cron_jobs_if_emptied(
         return None
 
     try:
-        live_path.parent.mkdir(parents=True, exist_ok=True)
+        secure_private_directory(live_path.parent)
+        if live_path.exists():
+            secure_private_path(live_path, directory=False)
         shutil.copy2(snap_path, live_path)
+        secure_private_path(live_path, directory=False)
+    except PrivatePathError:
+        raise
     except (OSError, PermissionError) as exc:
         logger.error(
             "Cron jobs were emptied during update but auto-restore failed: %s", exc
@@ -2140,10 +2223,11 @@ def _write_full_zip_backup_locked(out_path: Path, hermes_root: Path) -> Optional
                         # temp file lives on the same filesystem.  The system
                         # default (/tmp) may be a small tmpfs that cannot hold
                         # large databases, causing silent backup incompleteness.
-                        with tempfile.NamedTemporaryFile(
-                            suffix=".db", delete=False, dir=str(out_path.parent)
-                        ) as tmp:
-                            tmp_db = Path(tmp.name)
+                        tmp_db = create_private_temp_file(
+                            out_path.parent,
+                            prefix=".hermes-db-",
+                            suffix=".db",
+                        )
                         try:
                             if not _safe_copy_db(abs_path, tmp_db):
                                 logger.warning(

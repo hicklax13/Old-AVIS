@@ -88,6 +88,11 @@ from hermes_cli.config import (
     require_readable_config_before_write,
 )
 from hermes_constants import OPENROUTER_BASE_URL, secure_parent_dir
+from hermes_security import (
+    create_private_temp_file,
+    secure_private_directory,
+    secure_private_path,
+)
 from agent.credential_persistence import sanitize_borrowed_credential_payload
 from utils import atomic_replace, atomic_yaml_write, env_float, is_truthy_value
 
@@ -1355,6 +1360,9 @@ def _auth_store_lock(
     against a concurrent import on the shared store.
     """
     auth_path = target_path if target_path is not None else _auth_file_path()
+    # The lock and atomic temp files must inherit a private DACL before they
+    # are created. ACL enforcement failures are credential-write failures.
+    secure_private_directory(auth_path.parent)
     lock_path = auth_path.with_suffix(".lock") if target_path is not None else _auth_lock_path()
     with _file_lock(
         lock_path,
@@ -1389,15 +1397,29 @@ def _load_auth_store(auth_file: Optional[Path] = None) -> Dict[str, Any]:
         # Genuine corruption: unparseable JSON, or bytes that are not UTF-8.
         corrupt_path = auth_file.with_suffix(".json.corrupt")
         preserved = False
+        corrupt_tmp: Optional[Path] = None
         try:
-            import shutil
-            shutil.copy2(auth_file, corrupt_path)
+            secure_private_directory(auth_file.parent)
+            if corrupt_path.exists():
+                secure_private_path(corrupt_path, directory=False)
+            corrupt_tmp = create_private_temp_file(
+                auth_file.parent,
+                prefix=f".{corrupt_path.name}.",
+                suffix=".tmp",
+            )
+            shutil.copy2(auth_file, corrupt_tmp)
+            os.replace(corrupt_tmp, corrupt_path)
+            corrupt_tmp = None
+            secure_private_path(corrupt_path, directory=False)
             preserved = True
         except Exception:
             logger.debug(
                 "auth: could not preserve a copy of the corrupt store at %s",
                 corrupt_path, exc_info=True,
             )
+        finally:
+            if corrupt_tmp is not None:
+                corrupt_tmp.unlink(missing_ok=True)
         if preserved:
             logger.warning(
                 "auth: failed to parse %s (%s), starting with empty store. "
@@ -1441,7 +1463,7 @@ def _save_auth_store(auth_store: Dict[str, Any], target_path: Optional[Path] = N
     # OAuth grants (#43589) — reusing this function's atomic O_EXCL + 0o600
     # write so the root auth.json gets the same TOCTOU-safe treatment.
     auth_file = target_path if target_path is not None else _auth_file_path()
-    auth_file.parent.mkdir(parents=True, exist_ok=True)
+    secure_private_directory(auth_file.parent)
     # Tighten parent dir to 0o700 so siblings can't traverse to creds.
     # No-op on Windows (POSIX mode bits not enforced); ignore failures.
     # secure_parent_dir refuses to chmod /, top-level dirs, or the
@@ -1450,21 +1472,18 @@ def _save_auth_store(auth_store: Dict[str, Any], target_path: Optional[Path] = N
     auth_store["version"] = AUTH_STORE_VERSION
     auth_store["updated_at"] = datetime.now(timezone.utc).isoformat()
     payload = json.dumps(auth_store, indent=2) + "\n"
-    tmp_path = auth_file.with_name(f"{auth_file.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    tmp_path = create_private_temp_file(
+        auth_file.parent,
+        prefix=f".{auth_file.name}.",
+        suffix=".tmp",
+    )
     try:
-        # Create with 0o600 atomically via os.open(O_EXCL) + fdopen to close
-        # the TOCTOU window where default umask (often 0o644) briefly exposed
-        # OAuth tokens to other local users between open() and chmod().
-        # Mirrors agent/google_oauth.py (#19673) and tools/mcp_oauth.py (#21148).
-        fd = os.open(
-            str(tmp_path),
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            stat.S_IRUSR | stat.S_IWUSR,
-        )
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        if auth_file.exists():
+            secure_private_path(auth_file, directory=False)
         atomic_replace(tmp_path, auth_file)
         try:
             dir_fd = os.open(str(auth_file.parent), os.O_RDONLY)
@@ -1486,6 +1505,7 @@ def _save_auth_store(auth_store: Dict[str, Any], target_path: Optional[Path] = N
         auth_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
     except OSError:
         pass
+    secure_private_path(auth_file, directory=False)
     return auth_file
 
 
@@ -2833,27 +2853,21 @@ def _read_qwen_cli_tokens() -> Dict[str, Any]:
 
 def _save_qwen_cli_tokens(tokens: Dict[str, Any]) -> Path:
     auth_path = _qwen_cli_auth_path()
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-    # secure_parent_dir refuses to chmod /, top-level dirs, or the
-    # hermes-agent install tree (#25821, #93050).
-    secure_parent_dir(auth_path)
-    # Per-process random temp suffix avoids collisions between concurrent
-    # writers and stale leftovers from a crashed prior write.
-    tmp_path = auth_path.with_name(f"{auth_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
-    # Create with 0o600 atomically via os.open(O_EXCL) — closes the TOCTOU
-    # window where write_text() + post-write chmod briefly exposed tokens
-    # at process umask (typically 0o644). See #19673, #21148.
-    fd = os.open(
-        str(tmp_path),
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-        stat.S_IRUSR | stat.S_IWUSR,
+    secure_private_directory(auth_path.parent)
+    tmp_path = create_private_temp_file(
+        auth_path.parent,
+        prefix=f".{auth_path.name}.",
+        suffix=".tmp",
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with open(tmp_path, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(tokens, indent=2, sort_keys=True) + "\n")
             fh.flush()
             os.fsync(fh.fileno())
+        if auth_path.exists():
+            secure_private_path(auth_path, directory=False)
         atomic_replace(tmp_path, auth_path)
+        secure_private_path(auth_path, directory=False)
     finally:
         try:
             if tmp_path.exists():
@@ -5647,31 +5661,32 @@ def _write_shared_nous_state(state: Dict[str, Any]) -> None:
         "expires_at": state.get("expires_at"),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    path: Optional[Path] = None
+    tmp: Optional[Path] = None
+    published = False
     try:
         with _nous_shared_store_lock():
             path = _nous_shared_store_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # secure_parent_dir refuses to chmod /, top-level dirs, or the
-            # hermes-agent install tree (#25821, #93050).
-            secure_parent_dir(path)
-            tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
-            # Create with 0o600 atomically via os.open(O_EXCL) — closes the TOCTOU
-            # window where write_text() + post-write chmod briefly exposed Nous
-            # refresh_token at process umask. See #19673, #21148.
-            fd = os.open(
-                str(tmp),
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                stat.S_IRUSR | stat.S_IWUSR,
+            secure_private_directory(path.parent)
+            tmp = create_private_temp_file(
+                path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
             )
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                with open(tmp, "w", encoding="utf-8") as fh:
                     fh.write(json.dumps(shared, indent=2, sort_keys=True))
                     fh.flush()
                     os.fsync(fh.fileno())
+                if path.exists():
+                    secure_private_path(path, directory=False)
                 os.replace(tmp, path)
+                published = True
+                tmp = None
+                secure_private_path(path, directory=False)
             finally:
                 try:
-                    if tmp.exists():
+                    if tmp is not None and tmp.exists():
                         tmp.unlink()
                 except OSError:
                     pass
@@ -5681,6 +5696,13 @@ def _write_shared_nous_state(state: Dict[str, Any]) -> None:
             refresh_token_fp=_token_fingerprint(refresh_token),
         )
     except Exception as exc:
+        # The shared store is optional, but an insecure credential copy is
+        # not.  If publication happened and read-back failed, remove it.
+        if published and path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         logger.debug("Failed to write shared Nous auth store: %s", exc)
 
 

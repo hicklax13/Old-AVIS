@@ -15,13 +15,24 @@ export const NEEDS_AUTH_RE = /\b(401|unauthorized|forbidden|invalid[_ ]?token|au
 export const PROBE_TTL_MS = 5 * 60_000
 
 export const probeCache = new Map<string, { at: number; result: McpTestResult }>()
+const terminalProbeParks = new Set<string>()
 
 // A probe is only valid for one (profile, exact-config) pair. Keying the cache
 // by a fingerprint of the connection-relevant fields — plus the active profile
 // — means a same-name edit (url/command/env change) or a same-named server in
 // another profile MISSES the cache instead of showing a stale probe.
 export const serverFingerprint = (server: Record<string, unknown>): string =>
-  JSON.stringify([server.url, server.command, server.args, server.env, server.headers, server.transport, server.auth])
+  JSON.stringify([
+    server.enabled,
+    server.url,
+    server.command,
+    server.args,
+    server.env,
+    server.headers,
+    server.transport,
+    server.auth,
+    server.oauth
+  ])
 
 export const probeKey = (name: string, server: Record<string, unknown> | undefined, profileKey: string): string =>
   `${profileKey}::${name}::${serverFingerprint(server ?? {})}`
@@ -31,6 +42,37 @@ export function freshProbe(key: string, now = Date.now()): McpTestResult | null 
   const cached = probeCache.get(key)
 
   return cached && now - cached.at < PROBE_TTL_MS ? cached.result : null
+}
+
+/** A failed probe that time alone cannot fix. Needs-auth is terminal even when
+ * an older backend omits the additive `retryable` field. */
+export function isTerminalProbeFailure(result: McpTestResult): boolean {
+  return !result.ok && (result.retryable === false || NEEDS_AUTH_RE.test(result.error ?? ''))
+}
+
+/** Record a probe and maintain the exact profile+config sticky-park bit. */
+export function rememberProbe(key: string, result: McpTestResult, now = Date.now()): void {
+  probeCache.set(key, { at: now, result })
+
+  if (isTerminalProbeFailure(result)) {
+    terminalProbeParks.add(key)
+  } else {
+    terminalProbeParks.delete(key)
+  }
+}
+
+/** Return a terminal result regardless of the ordinary freshness TTL. */
+export function parkedProbe(key: string): McpTestResult | null {
+  if (!terminalProbeParks.has(key)) {
+    return null
+  }
+
+  return probeCache.get(key)?.result ?? null
+}
+
+/** Manual retry/auth action explicitly releases a sticky park. */
+export function clearProbePark(key: string): void {
+  terminalProbeParks.delete(key)
 }
 
 /** Classify a finished probe the way the MCP page's status dot does. */

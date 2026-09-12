@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 _HASS_URL: str = ""
 _HASS_TOKEN: str = ""
 
+# Physical device actions can legitimately take longer than ordinary state
+# reads.  A Samsung TV on Connor's LAN returned HTTP 200 after 31.55 seconds
+# for a successful power-off action; the old 15-second limit reported a false
+# failure even though the TV had already turned off.
+_SERVICE_CALL_TIMEOUT_SECONDS = 45
+_ASYNC_BRIDGE_TIMEOUT_SECONDS = 60
+
 
 def _get_config():
     """Return the active profile's Home Assistant URL and token."""
@@ -193,7 +200,7 @@ async def _async_call_service(
             url,
             headers=_get_headers(hass_token),
             json=payload,
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=aiohttp.ClientTimeout(total=_SERVICE_CALL_TIMEOUT_SECONDS),
         ) as resp:
             resp.raise_for_status()
             result = await resp.json()
@@ -217,7 +224,7 @@ def _run_async(coro):
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, coro)
-            return future.result(timeout=30)
+            return future.result(timeout=_ASYNC_BRIDGE_TIMEOUT_SECONDS)
     else:
         return asyncio.run(coro)
 

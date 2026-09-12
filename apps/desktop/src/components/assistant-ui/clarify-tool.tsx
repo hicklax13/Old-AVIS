@@ -924,6 +924,7 @@ function BatchQuestionBlock({
 }
 
 const emptyStage = { choices: [] as string[], draft: '' }
+const EMPTY_QUESTIONS: ClarifyQuestion[] = []
 
 /** Live batch card: all questions at once, staged locally, ONE confirm.
  * Picks and drafts stay in component state — nothing reaches the server
@@ -939,7 +940,7 @@ function ClarifyToolBatchPending({ onAnswered, request }: { onAnswered: () => vo
 
   // qids only exist on the gateway request — args are a hydration-race
   // fallback for display, never answerable (no ids to respond with).
-  const questions = request?.questions ?? []
+  const questions = request?.questions ?? EMPTY_QUESTIONS
   const ready = Boolean(request?.requestId) && questions.length > 0
 
   const [staged, setStaged] = useState<Record<string, { choices: string[]; draft: string }>>({})

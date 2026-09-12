@@ -419,6 +419,8 @@ function SidebarSessionRowImpl({
             // with its own tighter internal flex gap.
             card && 'flex-col items-stretch justify-center py-1.5 [--card-gap:0.4rem] gap-(--card-gap)'
           )}
+          data-session-id={session.id}
+          data-slot="session-row"
           // Middle-click = open in a new tab (browser muscle memory).
           {...middleClickHandlers(() => {
             triggerHaptic('selection')

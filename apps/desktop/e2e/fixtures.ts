@@ -20,13 +20,13 @@
  * Prerequisite: `npm run build` must have been run so that `dist/` exists.
  */
 
+import { spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
 
-import { resolveElectronBinary } from './electron-binary'
 import { startMockServer, type MockServerOptions } from './mock-server'
 import { installErrorBannerGuard } from './test'
 
@@ -249,6 +249,9 @@ export function buildAppEnv(sandbox: Sandbox, extra: Record<string, string> = {}
     // The dev-server check in main.ts looks for this env var; if it's set,
     // it loads from the vite URL instead of the local file.
     ...extra,
+    // Keep Playwright's blue-accented Electron fixture off the user's desktop.
+    // Tests still drive the fully rendered page over Electron's CDP transport.
+    HERMES_DESKTOP_E2E_HIDDEN: '1',
   }
 }
 
@@ -281,18 +284,35 @@ function assertDistBuilt(): void {
 
 /**
  * Find the Electron binary. In the nix devshell, `electron` is on PATH.
- * As a fallback, use the node_modules/electron install from either package.
+ * As a fallback, use the node_modules/.bin/electron from the desktop package.
  */
 export function findElectron(): string {
   // In dev mode, we use the `electron` binary directly (not the packaged app).
   // The dev:electron script in package.json does exactly this: `electron .`
   // after building. We replicate that here.
-  //
-  // The desktop package is searched first: npm workspaces only hoist
-  // `electron` to the repo root when nothing conflicts, so a workspace-local
-  // install is just as ordinary an outcome as a hoisted one. The rules live in
-  // ./electron-binary so they can be unit-tested per platform.
-  return resolveElectronBinary([DESKTOP_ROOT, REPO_ROOT])
+  const executableName = process.platform === 'win32' ? 'electron.exe' : 'electron'
+  const localElectrons = [
+    path.join(REPO_ROOT, 'node_modules', 'electron', 'dist', executableName),
+    path.join(DESKTOP_ROOT, 'node_modules', 'electron', 'dist', executableName),
+  ]
+
+  for (const localElectron of localElectrons) {
+    if (fs.existsSync(localElectron)) return localElectron
+  }
+
+  // Fall back to PATH
+  const locator = process.platform === 'win32' ? 'where.exe' : 'which'
+  const result = spawnSync(locator, ['electron'], {
+    encoding: 'utf8',
+  })
+
+  if (result.status === 0 && result.stdout.trim()) {
+    return result.stdout.trim().split(/\r?\n/, 1)[0]
+  }
+
+  throw new Error(
+    'Electron binary not found. Run "npm install" from the repo root to install devDependencies.',
+  )
 }
 
 /**
@@ -646,7 +666,11 @@ export async function waitForAppReady(fixture: MockBackendFixture | NoProviderFi
   // wireWindowReveal's post-load fallback in production — but the DOM can be
   // ready before that lands. Poll until the window is actually visible so
   // interactions (click, screenshot) don't hit a hidden surface.
-  if (app) {
+  const intentionallyHidden = app
+    ? await app.evaluate(() => process.env.HERMES_DESKTOP_E2E_HIDDEN === '1').catch(() => false)
+    : false
+
+  if (app && !intentionallyHidden) {
     const deadline = Date.now() + timeoutMs
 
     while (Date.now() < deadline) {

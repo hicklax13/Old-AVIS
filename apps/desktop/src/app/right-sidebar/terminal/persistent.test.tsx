@@ -102,7 +102,7 @@ describe('PersistentTerminal rect tracking', () => {
   beforeEach(() => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     setDocumentHidden(false)
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    vi.spyOn(globalThis.document, 'hasFocus').mockReturnValue(true)
     windowState = installWindowStateBridge()
     resizeObserverCallback = null
     mutationObserverCallback = null
@@ -296,7 +296,7 @@ describe('PersistentTerminal rect tracking', () => {
 
   it('does not schedule an initial frame when mounted while unfocused', () => {
     const raf = installRaf()
-    vi.mocked(document.hasFocus).mockReturnValue(false)
+    vi.mocked(globalThis.document.hasFocus).mockReturnValue(false)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(10, 20, 200, 100))
 
     mount.render(<Harness />)
@@ -384,7 +384,7 @@ describe('PersistentTerminal rect tracking', () => {
     expect(overlay.style.pointerEvents).toBe('auto')
 
     act(() => {
-      vi.mocked(document.hasFocus).mockReturnValue(false)
+      vi.mocked(globalThis.document.hasFocus).mockReturnValue(false)
       window.dispatchEvent(new Event('blur'))
     })
 

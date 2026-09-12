@@ -25,7 +25,7 @@ function makeRepo() {
   execFileSync('git', ['config', 'user.name', 'Hermes Test'], { cwd: dir })
   fs.writeFileSync(path.join(dir, 'tracked.txt'), 'tracked\n')
   execFileSync('git', ['add', 'tracked.txt'], { cwd: dir })
-  execFileSync('git', ['commit', '-qm', 'initial'], { cwd: dir })
+  execFileSync('git', ['-c', 'commit.gpgSign=false', 'commit', '-qm', 'initial'], { cwd: dir })
 
   return dir
 }

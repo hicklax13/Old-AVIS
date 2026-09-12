@@ -114,16 +114,18 @@ test('HUD composer remains fully inside the transparent window', async () => {
   // standalone `translate: -50%` survived optimization (#82214, #82233).
   expect(geometry.dockLeft).toBeGreaterThanOrEqual(0)
   expect(geometry.inputLeft).toBeGreaterThanOrEqual(0)
-  expect(geometry.dockRight).toBeLessThanOrEqual(geometry.viewportWidth)
-  expect(geometry.inputRight).toBeLessThanOrEqual(geometry.viewportWidth)
+  // Chromium can report a fractional compositor edge just beyond the integer
+  // viewport on Windows. One CSS pixel is still fully contained visually.
+  expect(geometry.dockRight).toBeLessThanOrEqual(geometry.viewportWidth + 1)
+  expect(geometry.inputRight).toBeLessThanOrEqual(geometry.viewportWidth + 1)
 
   // Vertical containment — the toolbar/transcript clipping reported on
   // Windows (#82203) and macOS (#82214) is the same "composer escapes the
   // window" class on the other axis.
   expect(geometry.dockTop).toBeGreaterThanOrEqual(0)
   expect(geometry.inputTop).toBeGreaterThanOrEqual(0)
-  expect(geometry.dockBottom).toBeLessThanOrEqual(geometry.viewportHeight)
-  expect(geometry.inputBottom).toBeLessThanOrEqual(geometry.viewportHeight)
+  expect(geometry.dockBottom).toBeLessThanOrEqual(geometry.viewportHeight + 1)
+  expect(geometry.inputBottom).toBeLessThanOrEqual(geometry.viewportHeight + 1)
 
   // The dock's centering translate must be fully neutralized. Any live
   // percentage translate means the HUD override lost to the app's centering.

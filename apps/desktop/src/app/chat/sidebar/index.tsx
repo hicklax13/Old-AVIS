@@ -137,6 +137,7 @@ import {
   type AppView,
   ARTIFACTS_ROUTE,
   CRON_ROUTE,
+  KANBAN_ROUTE,
   MESSAGING_ROUTE,
   SIDEBAR_NAV_AREA,
   type SidebarNavContribution,
@@ -214,6 +215,13 @@ const SIDEBAR_NAV: SidebarNavItem[] = [
     icon: props => <Codicon name="files" {...props} />,
     route: ARTIFACTS_ROUTE,
     keybindActionId: 'nav.artifacts'
+  },
+  {
+    id: 'kanban',
+    label: '',
+    icon: props => <Codicon name="project" {...props} />,
+    route: KANBAN_ROUTE,
+    keybindActionId: 'nav.kanban'
   },
   {
     id: 'cron',

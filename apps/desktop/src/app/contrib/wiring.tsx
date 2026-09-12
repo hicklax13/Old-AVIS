@@ -163,6 +163,7 @@ const WebhooksView = lazy(async () => ({ default: (await import('../webhooks')).
 const ProfilesView = lazy(async () => ({ default: (await import('../profiles')).ProfilesView }))
 const SettingsView = lazy(async () => ({ default: (await import('../settings')).SettingsView }))
 const StarmapView = lazy(async () => ({ default: (await import('../starmap')).StarmapView }))
+const KanbanView = lazy(async () => ({ default: (await import('../kanban')).KanbanView }))
 
 // Surfaces (the four wired panes), the render context + WiredPane, and the
 // WiringActions/WiringApi contracts all live in sibling modules — this file is
@@ -261,6 +262,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     commandCenterOpen,
     cronOpen,
     currentView,
+    kanbanOpen,
     openAgents,
     openCommandCenterSection,
     openStarmap,
@@ -1232,6 +1234,12 @@ export function ContribWiring({ children }: { children: ReactNode }) {
       {starmapOpen && (
         <Suspense fallback={null}>
           <StarmapView onClose={closeOverlayToPreviousRoute} />
+        </Suspense>
+      )}
+
+      {kanbanOpen && (
+        <Suspense fallback={null}>
+          <KanbanView />
         </Suspense>
       )}
 

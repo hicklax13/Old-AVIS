@@ -1,0 +1,6 @@
+name: comfyui
+version: 1.0.0
+description: "Local ComfyUI image generation backend (FLUX.2 Klein 4B GGUF via a local ComfyUI server on 127.0.0.1:8188). No API key, no cloud."
+author: local
+kind: backend
+requires_env: []

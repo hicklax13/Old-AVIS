@@ -104,7 +104,7 @@ class TestSaveUrlImage:
         assert path.read_bytes() == PNG_1PX
         # The cache directory must be under HERMES_HOME — gateway cleanup
         # relies on this being the canonical location.
-        assert "cache/images" in str(path)
+        assert "cache/images" in path.as_posix()
         assert path.suffix == ".png"
 
 

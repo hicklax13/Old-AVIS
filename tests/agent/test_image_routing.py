@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -377,13 +378,34 @@ class TestExtractImageRefs:
         assert paths == [str(img)]
         assert urls == []
 
+    def test_finds_windows_drive_path(self, tmp_path: Path):
+        """A drive-letter path (``C:\\dir\\pic.png``) must be picked up.
+
+        Guarded to Windows because the literal only exists there; the regex
+        itself matches either separator, which the absolute-path test covers
+        natively on POSIX.
+        """
+        if os.name != "nt":
+            import pytest
+
+            pytest.skip("drive-letter paths only exist on Windows")
+        img = tmp_path / "shot.png"
+        img.write_bytes(_png_bytes())
+        # Backslash form is the one users actually paste from Explorer.
+        wire = str(img).replace("/", "\\")
+        paths, urls = extract_image_refs(f"Look at {wire} and tell me what's wrong.")
+        assert paths == [str(img)]
+        assert urls == []
+
     def test_finds_home_relative_path(self, tmp_path: Path, monkeypatch):
-        # Simulate ~/foo.png by pointing HOME at tmp_path and creating the file
+        # Simulate ~/foo.png by pointing the home dir at tmp_path. expanduser()
+        # reads USERPROFILE on Windows and HOME elsewhere, so set both.
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         img = tmp_path / "foo.png"
         img.write_bytes(_png_bytes())
         paths, urls = extract_image_refs("see ~/foo.png please")
-        assert paths == [str(img)]
+        assert [os.path.normpath(p) for p in paths] == [os.path.normpath(str(img))]
         assert urls == []
 
 

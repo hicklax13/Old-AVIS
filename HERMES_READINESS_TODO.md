@@ -6,6 +6,190 @@ repository, project-task history, canonical Desktop installation, normal and
 profile-scoped runtime state, integrations, services, backups, permissions, and
 live logs.
 
+## Security repair and maintenance routing verified (2026-09-13, 20:56 ET)
+
+- [x] Upgraded managed and test HTTPX2/HTTPCORE2 packages from 2.7.0 to 2.12.0;
+  updated all three active manifest pins and uv.lock. All 142 runtime packages
+  remain compatible. Normal dependency sync now retains the patched versions.
+- [x] Fixed Desktop maintenance launch/result ownership and repeated-action
+  polling. Reproduced and repaired the display of another profile's stale audit.
+- [x] Passed 147 Python tests (one skipped), 35 renderer tests, 132 Electron
+  routing tests, real HTTP MCP invocation with compressed output, typechecks,
+  focused lint, Windows packaging, and hidden native-terminal smoke verification.
+- [x] Deployed into the canonical taskbar executable with a verified 500-file
+  recovery backup; preserved all 78 preexisting tracked repair patches. Final
+  package hash and pinned/live executable match. No test Electron remains.
+- [x] Read fresh clean audits in canonical Desktop: default at 20:48:22 and
+  20:48:45, reviewer at 20:54:11; each reports 0 findings across 142 components
+  and matches its own profile's log.
+- [x] Opened all eight profiles and verified Gateway ready plus actual backend
+  readiness/session-list responses. Final Desktop root 42776; gateway 68248 is
+  running the upgraded managed runtime. Left Desktop on default.
+- [x] Rechecked 15 enabled MCP definitions and nine shared OAuth owners across
+  eight profiles, eight warm slots, and seven-day idle timeout. Plaid, Strava,
+  Indeed, and Unreal Engine remain removed.
+- Evidence and limits: `HERMES_SECURITY_REPAIR_20260913.md` and
+  `C:\Dev\hermes-agent-recovery\security-upgrade-20260913`. External availability,
+  xAI billing, cold reboot/sleep recovery, and future upstream conflicts are not
+  represented as solved by this dependency/reporting repair.
+
+## Update conflicts resolved and deployment verified (2026-09-13, evening)
+
+- [x] Resolved the two MCP merge conflicts while retaining shared OAuth ownership,
+  separate account/client-certificate identities, and each profile's trust policy.
+  Preserved original source and a verified 500-file package backup.
+- [x] Installed the 135-commit update at `a7254e2d4c170725a4136591e96efc5066251d2c`
+  plus local repairs. Normal updater restored the resolved changes and completed
+  with success/exit 0 at 19:27:32 ET; Desktop remains Hermes 0.21.2.
+- [x] Verified 79 Python tests and 243 Desktop tests, production build, hidden
+  packaged launch/native terminal, canonical taskbar relaunch, all eight profiles
+  ready, matching gateway code SHA, and no remaining test Electron processes.
+- [x] Read back eight backend slots, seven-day idle timeout, 15 shared enabled MCP
+  definitions and nine OAuth owners across eight profiles. The four deliberately
+  removed servers remain absent.
+- [x] Reviewed the subsequent security audit: fresh scan reproduces 12 entries
+  across 142 components. Confirmed the five underlying HTTPX2 vulnerabilities,
+  patched 2.12.0 packages, and a resolver plan that upgrades only those two packages.
+- [x] Applied the reviewed security repair: updated all three HTTPX2 pins and uv.lock,
+  upgraded the managed HTTPX2/HTTPCORE2 runtime packages from 2.7.0 to 2.12.0,
+  validated MCP/OAuth compatibility, restarted canonical Desktop/gateway, and
+  verified the audit.
+  Completed and verified at 20:56 ET; see the security repair section above.
+- Evidence: `HERMES_UPDATE_RESOLUTION_20260913.md` and
+  `C:\Dev\hermes-agent-recovery\update-resolution-20260913`.
+
+## Profile loading repair verified (2026-09-13, 18:19 ET)
+
+- [x] Reproduced the reported Operator failure from real Desktop logs: the
+  default three-backend pool was full and foreground starts timed out after
+  thirty seconds. Saved eight warm backend slots and a seven-day idle timeout
+  in the normal Desktop profile; verified both values after app restart and in
+  native Advanced settings.
+- [x] Fixed the stale Runtime not ready notification so a verified recovery
+  clears it while preserving unrelated errors. Regression failed before the fix;
+  all 39 focused onboarding/profile tests, renderer typecheck, and build passed.
+- [x] Packaged and deployed through the canonical executable with a verified
+  500-file package backup. Relaunched through the pinned shortcut. Hidden package
+  rendering/native-terminal smoke passed; no visible test app was launched.
+- [x] Opened all eight profiles in canonical Desktop and observed Gateway ready.
+  Repeated Operator/Reviewer/default switching passed. All eight actual owned
+  backends answered readiness and session-list checks with correct profile
+  identity, retaining their PIDs. No new slot waits or start failures occurred.
+- [x] Confirmed the 15 enabled shared MCP definitions and nine shared OAuth
+  owners remain consistent in all eight profiles; the four intentionally removed
+  servers remain absent. Canonical taskbar/Startup targets and package stamp
+  passed read-back. Final app root 87928; zero test Electron processes.
+- Evidence and scope: `HERMES_PROFILE_LOADING_REPAIR_20260913.md` and
+  `C:\Dev\hermes-agent-recovery\profile-loading-20260913`. Hermes remains 0.21.2
+  at `3f86ed75dad1933036c52018e991dbd839837126` plus local repairs. The app is left
+  on default with all eight backends running. Cold reboot, sleep/wake, new model
+  generations, and fresh invocation of every MCP were not part of this profile
+  loading verification; external availability and perpetual uptime are not promised.
+
+## Doctor repair and subsequent update verified (2026-09-13, 17:28 ET)
+
+This section supersedes the earlier installed-build and MCP-count snapshots below.
+
+- [x] Completed the additional update Connor initiated at 16:45. The incoming
+  change conflicted with two local MCP files; recovered all preserved source,
+  integrated both behaviors, and fixed the unsafe retry after a required restore
+  failure. The actual repaired Windows updater completed at 17:06:15 and relaunched
+  the canonical app at 17:06:19. Its durable receipt reports success and exit 0.
+- [x] Installed Hermes 0.21.2 at `3f86ed75dad1933036c52018e991dbd839837126` plus
+  local repairs, Desktop package 0.17.2, Electron 41.10.3. Verified inclusion of the
+  latest published `v2026.9.11` release, the current build stamp, release junction,
+  pinned executable, normal Roaming profile, and native Gateway ready status.
+- [x] Repaired vulnerable npm dependencies and misleading Doctor audit reporting.
+  The final Run doctor result was read back in canonical Desktop: all five audit
+  scopes report no known vulnerabilities; no orphan profile launcher remains.
+  Saved xAI OAuth credentials are no longer mislabeled as connectivity proof.
+- [x] Fixed the Windows gateway launcher generator to preserve supervised `/wait`
+  operation across updates. A real generated-launcher regression returns the
+  child's failure code, and the actual Startup wrapper is running the gateway.
+  Verified one gateway Startup entry and the canonical Desktop Startup shortcut.
+- [x] Connor confirmed Plaid, Strava, Indeed, and Unreal Engine were intentionally
+  removed. Leave them removed. Read-back confirms the remaining 15 enabled MCP
+  servers and nine shared OAuth owners across all eight local profiles.
+- [x] Validation: 48 focused Python tests, 10 Windows launcher tests, and 39 focused
+  Desktop tests passed (one Desktop test skipped). The installed packaged app also
+  passed a hidden render/native-terminal smoke test. Final process audit: canonical
+  root 75900, five canonical children, zero test Electron processes; supervised
+  gateway chain 36940 -> 39092 -> 83004 -> 6660. Broader suite limitations are recorded
+  in the report and are not represented as a fully green suite.
+- [ ] Connor-owned remaining Doctor issue: review xAI API credits/spending limits.
+  Live HTTP 403 explicitly identifies exhausted credits or a monthly spending cap.
+  No billing changes or credential rotation were performed. Optional unconfigured
+  integrations remain informational; no arbitrary services were installed.
+- Recovery and evidence: `HERMES_DOCTOR_REPAIR_20260913.md` and
+  `C:\Dev\hermes-agent-recovery\doctor-repair-20260913`. Two verified package
+  backups, source patch/archive, and recovery stash
+  `305a0e52f61ff829a6146e00f3181236ed63c600` are preserved. No commits or pushes.
+  Cold reboot and sleep/wake recovery remain untested; perpetual provider access
+  is not promised.
+
+## In-app update repair verified (2026-09-13, earlier run)
+
+- Completed the recurring Desktop update repair through the canonical installed
+  app and normal profile. The live in-app update exited 0, passed package
+  verification, and relaunched successfully at 12:54:55 ET; the backend was ready
+  at 12:55:10. Installed versions: Hermes 0.21.2 and Desktop package 0.17.2,
+  source `5dea46d13deec9549bdc2ea703ae9201d733c28d` plus local repairs. The latest
+  published `v2026.9.11` release is included; the existing `main` channel remains.
+- The active updater/build source is `.hermes/hermes-agent`. Its Desktop `release`
+  directory is now a junction to the canonical outer `apps/desktop/release`.
+  Use `scripts/desktop-update/link-windows-release.ps1 -VerifyOnly` with the
+  documented install and executable paths to check this invariant. Future
+  packaging for this installation must use the active managed Desktop source.
+- The System update button now uses coordinated Desktop shutdown. ZIP fallback
+  preserves the release junction, successful Windows promotion retains a previous
+  package, and updates restore the repairs or fail explicitly if restoration fails.
+- Final read-back confirmed the pinned executable, normal profile, ready gateway,
+  fresh package content stamp, preserved source repairs, and zero test Electron
+  processes. The pinned shortcut was invoked again against the updated app.
+- Evidence, test limitations, and recovery details:
+  `HERMES_DESKTOP_UPDATE_REPAIR_20260913.md` and
+  `C:\Dev\hermes-agent-recovery\desktop-update-20260913`.
+  The original four unrelated source edits are unchanged. No commits or pushes
+  were made. Other readiness items and account-consent work are unchanged.
+
+## MCP sharing and reliability repair (2026-09-13)
+
+- [x] Installed the repaired canonical Desktop package and relaunched through the
+  pinned shortcut with the normal Roaming profile. Preserved a verified full package
+  backup (500 files, 402,688,614 bytes). Installed ASAR SHA-256:
+  `D7A86DF9FAC980DF4893B37D40D3A199B9DF2EC01318403F57ACC222391C5B2F`.
+- [x] All eight local profiles read the same 19 enabled MCP definitions; 11 OAuth
+  definitions use one default-owned store with serialized refresh. No rotating OAuth
+  token files were copied. Read-back preserved unrelated profile settings. Native
+  Desktop switching to google-personal loaded the shared connections without another
+  login. Future profiles cloning default inherit this explicit sharing policy.
+- [x] Fixed the dropped OAuth issuer, preserved existing grants during failed
+  reauthentication, and represented explicit prerequisites separately from transient
+  connection/authentication failures. Cloudflare's actual Desktop sign-in succeeded.
+  Real harmless calls passed on Cloudflare, Hugging Face, and Webflow in default and
+  google-personal, and on 10 additional services in default. PayPal is discovery-only.
+- [x] Installed a verified copy of the pinned canonical shortcut in the user's Windows
+  Startup folder. The existing hidden gateway retry wrapper is preserved under the
+  current recognized `Hermes_Gateway_9836f4d8.vbs` Startup name, with one entry and one
+  gateway process after an actual startup-wrapper launch. The legacy duplicate is backed up.
+  This starts at Windows sign-in; no full reboot test or perpetual uptime is claimed.
+- [x] Stripe: reproduced delayed-consent state replacement at 62.281 seconds, fixed
+  timeout propagation and concurrent loop lifecycle races, passed focused regressions
+  and review, and deployed/restarted the canonical app and runtime. A fresh grant was
+  recorded at 15:13:18 ET. Native Desktop and actual read-only tool calls both verified
+  10 tools in default and google-personal with shared authorization. Final native
+  read-back shows 15 connected servers and four prerequisites. Canonical root 64380,
+  detached gateway 79240, five normal-profile app children, zero test app processes.
+- [x] Superseded by Connor's later decision: Plaid, Strava, Indeed, and Unreal Engine
+  were intentionally removed from the shared configuration. Leave them removed;
+  the current fleet is 15 enabled servers across all eight profiles.
+- General capability sync was attempted and aborted before writes due to conflicting
+  project-pilot and Sonos skill copies. Those unrelated skills remain unchanged; the
+  dedicated MCP migration/read-back passed independently for all eight profiles.
+- Evidence, source backup, detailed test results, and current limitations:
+  `HERMES_MCP_RELIABILITY_REPAIR_20260913.md` and
+  `C:\Dev\hermes-agent-recovery\mcp-reliability-20260913`.
+
 ## Ownership
 
 - **Codex**: Codex can complete the item without Connor's input once its listed

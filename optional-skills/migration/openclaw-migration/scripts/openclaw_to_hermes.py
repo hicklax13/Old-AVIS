@@ -321,8 +321,40 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip())
 
 
+# Windows' ANSI filesystem calls refuse paths at or beyond MAX_PATH. Any path
+# handed to the OS for creation/writing that mirrors another path -- most
+# notably the backup tree, which is `backup_root + <source's full path>` -- can
+# silently double past that limit, and the resulting mkdir raises WinError 3
+# ("cannot find the path specified"), aborting the whole migration. Prepending
+# the \\?\ extended-length prefix lifts the limit.
+_WINDOWS_MAX_PATH = 260
+# Trigger below MAX_PATH so child names appended later still have headroom.
+_WINDOWS_LONG_PATH_TRIGGER = _WINDOWS_MAX_PATH - 20
+
+
+def windows_long_path(path: Path) -> Path:
+    """Return ``path`` in a form Windows can create even when it is very long.
+
+    No-op off Windows, for short paths, for relative paths (the prefix requires
+    an absolute normalized path), and for paths already prefixed. Use this only
+    at the filesystem-call boundary and keep the original ``Path`` for logs and
+    migration reports, so reported paths stay readable.
+    """
+    if os.name != "nt":
+        return path
+    raw = str(path)
+    if len(raw) < _WINDOWS_LONG_PATH_TRIGGER or raw.startswith("\\\\?\\"):
+        return path
+    if not os.path.isabs(raw):
+        return path
+    normalized = os.path.normpath(raw)
+    if normalized.startswith("\\\\"):  # UNC share
+        return Path("\\\\?\\UNC" + normalized[1:])
+    return Path("\\\\?\\" + normalized)
+
+
 def ensure_parent(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    windows_long_path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 def resolve_secret_input(value: Any, env: Optional[Dict[str, str]] = None) -> Optional[str]:
@@ -486,7 +518,8 @@ def parse_env_file(path: Path) -> Dict[str, str]:
 def save_env_file(path: Path, data: Dict[str, str]) -> None:
     ensure_parent(path)
     lines = [f"{key}={value}" for key, value in data.items()]
-    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    body = "\n".join(lines) + ("\n" if lines else "")
+    windows_long_path(path).write_text(body, encoding="utf-8")
 
 
 def backup_existing(path: Path, backup_root: Path) -> Optional[Path]:
@@ -495,10 +528,11 @@ def backup_existing(path: Path, backup_root: Path) -> Optional[Path]:
     rel = Path(*path.parts[1:]) if path.is_absolute() and len(path.parts) > 1 else path
     dest = backup_root / rel
     ensure_parent(dest)
+    fs_dest = windows_long_path(dest)
     if path.is_dir():
-        shutil.copytree(path, dest, dirs_exist_ok=True)
+        shutil.copytree(path, fs_dest, dirs_exist_ok=True)
     else:
-        shutil.copy2(path, dest)
+        shutil.copy2(path, fs_dest)
     return dest
 
 
@@ -1258,14 +1292,15 @@ class Migrator:
 
         if self.execute:
             backup_path = self.maybe_backup(destination)
+            fs_destination = windows_long_path(destination)
             ensure_parent(destination)
             if transform:
                 content = read_text(source)
                 content = transform(content)
-                destination.write_text(content, encoding="utf-8")
-                shutil.copystat(source, destination)
+                fs_destination.write_text(content, encoding="utf-8")
+                shutil.copystat(source, fs_destination)
             else:
-                shutil.copy2(source, destination)
+                shutil.copy2(source, fs_destination)
             self.record(kind, source, destination, "migrated", backup=str(backup_path) if backup_path else None)
         else:
             self.record(kind, source, destination, "migrated", "Would copy")

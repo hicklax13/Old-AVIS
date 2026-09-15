@@ -350,6 +350,7 @@ class TestPrintMigrationReport:
 
 
 class TestDetectOpenclawProcesses:
+    @pytest.mark.linux_only
     def test_returns_match_when_pgrep_finds_openclaw(self):
         with patch.object(claw_mod, "subprocess") as mock_subprocess:
             # systemd check misses, pgrep finds openclaw

@@ -41,10 +41,14 @@ class TestTemplate:
         assert TEMPLATE.is_file()
 
     def test_bash_syntax(self):
+        # Feed the script on stdin rather than passing its path: on Windows a
+        # native path (C:\Dev\...) reaches bash with the backslashes stripped
+        # ("C:Devhermes-agent..."), so bash reports No such file instead of
+        # checking syntax. Reading bytes also keeps this encoding-safe.
         proc = subprocess.run(
-            ["bash", "-n", str(TEMPLATE)], capture_output=True, text=True
+            ["bash", "-n"], input=TEMPLATE.read_bytes(), capture_output=True
         )
-        assert proc.returncode == 0, proc.stderr
+        assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
 
     def test_stages_marker_present(self):
         text = TEMPLATE.read_text(encoding="utf-8")

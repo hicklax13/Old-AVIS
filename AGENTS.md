@@ -45,9 +45,16 @@ Instructions for AI coding assistants and developers working on the hermes-agent
   `default`; do not create a blank profile unless Connor explicitly requests an
   isolated exception.
 - Do not copy refreshable OAuth stores (`mcp-tokens/`, `auth.json`,
-  `*_token.json`, or OAuth-pending files) between profiles. Enable the provider
-  everywhere, then authorize each profile independently. Copying a rotating
+  `*_token.json`, or OAuth-pending files) between profiles. Copying a rotating
   refresh token creates invalidation races and does not count as persistence.
+- On 2026-09-13 Connor explicitly requested one shared MCP login across this
+  device's profiles. Keep `mcp_shared_from: default` and the OAuth entries'
+  `oauth.token_owner: default` policy. Configure and authenticate MCPs in
+  `default`; other profiles reference that store through the tested refresh
+  lock instead of copying grants or requesting separate sign-ins. This is
+  MCP-only sharing; unrelated account and profile settings remain separate.
+  See `HERMES_MCP_RELIABILITY_REPAIR_20260913.md` for deployment evidence and
+  outstanding provider prerequisites.
 
 ## What Hermes Is
 

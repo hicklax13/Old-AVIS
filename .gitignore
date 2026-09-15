@@ -148,6 +148,10 @@ models-dev-upstream/
 # image stack — ~11 GB, machine-specific. Never commit these.
 models/
 
+# Transient tool caches written at the repo root (regenerated on demand).
+.hermes_cache_*.json
+.hermes_tmp_*.json
+
 # Local editor / agent tooling (machine-specific; keep in global config, not the repo)
 .codex/
 .cursor/

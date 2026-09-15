@@ -746,5 +746,43 @@ def test_messaging_settings_handles_invalid_utf8_in_telegram_allowlist(tmp_path:
     assert "123456789" in env_text
 
 
+def test_backup_existing_handles_paths_longer_than_windows_max_path(tmp_path):
+    """A deep source tree must not abort the migration on Windows.
 
+    ``backup_existing`` mirrors a source's full absolute path underneath the
+    backup root, so the destination is ``backup_root + <entire source path>``.
+    Once that exceeds Windows' 260-char MAX_PATH, ``mkdir`` raises WinError 3
+    and the whole migration dies -- which is exactly what a deep workspace (or a
+    long pytest tmp root) triggers.
+    """
+    module = load_module()
 
+    # Depth has to adapt: tmp_path length varies (pytest names the directory
+    # after this test), and the two constraints pull in opposite directions --
+    # the source must stay creatable on Windows (~<255) while its mirrored
+    # backup destination must exceed MAX_PATH (260).
+    deep = tmp_path / "workspace"
+    source = deep / "config.yaml"
+    while len(str(source)) < 240:
+        deep = deep / f"l{len(deep.parts):02d}"
+        source = deep / "config.yaml"
+
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("key: value\n", encoding="utf-8")
+
+    backup_root = tmp_path / ".hermes" / "migration-report" / "backups"
+    # A real MAX_PATH overflow, not an impossible setup. The migrator builds
+    # backup_root + <source with its drive stripped>, so the effective length is
+    # the sum (note: `backup_root / source` would *replace*, since source is
+    # absolute -- which is exactly why the production code strips the anchor).
+    assert len(str(source)) <= 250, "source too long to create on Windows"
+    assert len(str(backup_root)) + len(str(source)) > 260, "case no longer exercises MAX_PATH"
+
+    dest = module.backup_existing(source, backup_root)
+
+    assert dest is not None
+    # Reading a >260-char path back needs the same extended-length form on
+    # Windows; off Windows this is just `dest` again.
+    readable = module.windows_long_path(dest)
+    assert readable.is_file()
+    assert readable.read_text(encoding="utf-8") == "key: value\n"

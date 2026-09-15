@@ -1,10 +1,12 @@
+import os
+import shutil
 from pathlib import Path
 
 import pytest
 import yaml
 
 import scripts.sync_profile_capabilities as sync_module
-from hermes_security import verify_private_tree
+from hermes_security import is_reparse_point, verify_private_tree
 from scripts.sync_profile_capabilities import SyncError, synchronize
 
 
@@ -332,3 +334,65 @@ def test_apply_noop_does_not_create_empty_backup(tmp_path: Path):
 
     assert report.backup_dir is None
     assert not (root / "backups").exists()
+
+
+def _link_skill_tree(target: Path, link: Path) -> None:
+    """Point *link* at the canonical tree *target*, the way this host links.
+
+    Windows gets a junction (what the local profiles use, and what
+    ``Path.rglob`` follows); POSIX gets a symlink. Skip where the host refuses.
+    """
+    if os.name == "nt":  # pragma: no cover - platform branch
+        import _winapi
+
+        try:
+            _winapi.CreateJunction(str(target), str(link))
+            return
+        except (AttributeError, ImportError, OSError):
+            pass
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("host cannot create directory links")
+
+
+def test_sync_replaces_linked_skill_without_rmtree_failure(tmp_path: Path):
+    """A skill reached through a junction/symlink must sync like any other tree.
+
+    ``shutil.rmtree`` refuses a reparse point on Windows ("Cannot call rmtree on
+    a symbolic link"), so the post-apply cleanup aborted *after* every profile's
+    link had been renamed aside: the run never reported success and left
+    ``.sync-old-*`` links behind. ``Path.rglob`` also skips directory symlinks,
+    which made a linked skill invisible to conflict detection and then failed
+    the post-write digest check. Profiles legitimately link canonical trees.
+    """
+    root = tmp_path / "home"
+    _write_profile(root, mcp={}, env="OPENAI_API_KEY=one\n", skill="shared-skill")
+    (root / "skills" / "shared-skill" / "implementation.py").write_text(
+        "CANONICAL = True\n", encoding="utf-8"
+    )
+
+    beta = root / "profiles" / "beta"
+    _write_profile(
+        beta, mcp={}, env="OPENAI_API_KEY=one\n", skill="shared-skill", token=True
+    )
+    canonical = tmp_path / "canonical" / "beta" / "shared-skill"
+    canonical.mkdir(parents=True)
+    (canonical / "SKILL.md").write_text("---\nname: shared-skill\n---\n", encoding="utf-8")
+    (canonical / "obsolete.py").write_text("OBSOLETE = True\n", encoding="utf-8")
+    (canonical / "account_token.json").write_text("secret", encoding="utf-8")
+
+    beta_skill = beta / "skills" / "shared-skill"
+    shutil.rmtree(beta_skill)
+    _link_skill_tree(canonical, beta_skill)
+    assert is_reparse_point(beta_skill), "test must exercise the link-removal path"
+
+    report = synchronize(root, apply=True, resolve_skill_conflicts_from_default=True)
+
+    assert report.replaced_skills == {"beta": ["shared-skill"]}
+    assert not is_reparse_point(beta_skill)
+    assert (beta_skill / "implementation.py").read_text(encoding="utf-8") == "CANONICAL = True\n"
+    assert not (beta_skill / "obsolete.py").exists()
+    assert (beta_skill / "account_token.json").read_text(encoding="utf-8") == "secret"
+    assert (canonical / "obsolete.py").is_file()
+    assert list((beta / "skills").glob(".shared-skill.sync-old-*")) == []

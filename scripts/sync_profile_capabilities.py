@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 import yaml
 
@@ -300,6 +300,29 @@ def _skill_tree_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _iter_skill_manifests(root: Path) -> Iterator[Path]:
+    """Yield ``SKILL.md`` paths under *root*, descending through linked dirs.
+
+    ``Path.rglob`` skips directory symlinks (Windows junctions happen to be
+    followed), so a profile that links a skill at a canonical tree would be
+    invisible to conflict detection and then fail the post-write digest check.
+    Walk explicitly instead, and guard against loops by resolved real path.
+    """
+    seen: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=True):
+        real = os.path.realpath(dirpath)
+        if real in seen:
+            dirnames[:] = []
+            continue
+        seen.add(real)
+        parent = Path(dirpath)
+        dirnames[:] = sorted(
+            name for name in dirnames if name not in _RUNTIME_SKILL_DIRS
+        )
+        if "SKILL.md" in filenames:
+            yield parent / "SKILL.md"
+
+
 def _skill_sources(
     profiles: list[ProfileHome],
     *,
@@ -316,7 +339,7 @@ def _skill_sources(
         root = profile.path / "skills"
         if not root.is_dir():
             continue
-        for manifest in sorted(root.rglob("SKILL.md")):
+        for manifest in sorted(_iter_skill_manifests(root)):
             rel = manifest.parent.relative_to(root)
             source = manifest.parent
             source_digest = _skill_tree_digest(source)
@@ -495,6 +518,26 @@ def _private_skill_files(root: Path) -> Iterable[tuple[Path, Path]]:
                 yield path.relative_to(root), path
 
 
+def _remove_path(path: Path) -> None:
+    """Delete a real directory, a plain file, or a symlink/junction.
+
+    ``shutil.rmtree`` refuses a reparse point ("Cannot call rmtree on a symbolic
+    link"), and a skill reached through a symlink or Windows junction is a
+    legitimate layout (a profile pointing at a canonical tree). Unlink the link
+    itself and leave whatever it points at alone; Windows needs ``rmdir`` for a
+    directory link while POSIX needs ``unlink``.
+    """
+    if is_reparse_point(path) or path.is_symlink():
+        try:
+            path.unlink()
+        except OSError:
+            path.rmdir()
+    elif path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.exists():
+        shutil.rmtree(path)
+
+
 def _replace_skill_tree(source: Path, target: Path) -> Path:
     """Atomically replace public skill code while retaining local secret files.
 
@@ -520,14 +563,14 @@ def _replace_skill_tree(source: Path, target: Path) -> Path:
             os.replace(staged, target)
             secure_private_path(target, directory=True, recursive=True)
         except BaseException:
-            if target.exists():
-                shutil.rmtree(target)
+            if target.exists() or target.is_symlink():
+                _remove_path(target)
             os.replace(original, target)
             raise
         return original
     finally:
-        if staged.exists():
-            shutil.rmtree(staged)
+        if staged.exists() or staged.is_symlink():
+            _remove_path(staged)
 
 
 def synchronize(
@@ -721,8 +764,8 @@ def synchronize(
                 resolved_target = target.resolve(strict=False)
                 if not any(root in resolved_target.parents for root in allowed_skill_roots):
                     raise SyncError(f"Unsafe skill replacement rollback target: {target}")
-                if target.exists():
-                    shutil.rmtree(target)
+                if target.exists() or target.is_symlink():
+                    _remove_path(target)
                 os.replace(original, target)
                 secure_private_path(target, directory=True, recursive=True)
             except Exception as rollback_exc:
@@ -732,7 +775,7 @@ def synchronize(
                 resolved_target = target.resolve(strict=False)
                 if not any(root in resolved_target.parents for root in allowed_skill_roots):
                     raise SyncError(f"Unsafe skill rollback target: {target}")
-                shutil.rmtree(target)
+                _remove_path(target)
             except Exception as rollback_exc:
                 rollback_errors.append(f"{target}: {rollback_exc}")
         for path, content in reversed(list(originals.items())):
@@ -750,8 +793,8 @@ def synchronize(
         raise SyncError(message) from exc
 
     for _target, original in replaced_skill_originals:
-        if original.exists():
-            shutil.rmtree(original)
+        if original.exists() or original.is_symlink():
+            _remove_path(original)
     secure_private_path(backup_root, directory=True, recursive=True)
 
     return report

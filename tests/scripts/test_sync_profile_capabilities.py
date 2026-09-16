@@ -356,6 +356,24 @@ def _link_skill_tree(target: Path, link: Path) -> None:
         pytest.skip("host cannot create directory links")
 
 
+def test_sync_shares_known_provider_keys_instead_of_refusing(tmp_path: Path):
+    """A registered provider key must not fall through to the shape heuristic.
+
+    ``OLLAMA_API_KEY`` is declared by the ollama-cloud model provider, but
+    without a policy entry the ``*_API_KEY`` heuristic classified it
+    ``ambiguous_secret`` and refused the whole sync — a refusal the user cannot
+    resolve from config.
+    """
+    root = tmp_path / "home"
+    _write_profile(root, mcp={}, env="OLLAMA_API_KEY=one\n", skill="alpha-skill")
+    beta = root / "profiles" / "beta"
+    _write_profile(beta, mcp={}, env="", skill="alpha-skill")
+
+    synchronize(root, apply=True)
+
+    assert "OLLAMA_API_KEY=one" in (beta / ".env").read_text(encoding="utf-8")
+
+
 def test_sync_replaces_linked_skill_without_rmtree_failure(tmp_path: Path):
     """A skill reached through a junction/symlink must sync like any other tree.
 

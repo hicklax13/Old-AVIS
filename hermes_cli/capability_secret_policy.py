@@ -41,6 +41,7 @@ _POLICIES: dict[str, EnvKeyPolicy] = {
     "HASS_TOKEN": EnvKeyPolicy("shared_static", True, "Home Assistant"),
     "HF_TOKEN": EnvKeyPolicy("shared_static", True, "Hugging Face"),
     "LM_API_KEY": EnvKeyPolicy("shared_static", True, "LM Studio"),
+    "OLLAMA_API_KEY": EnvKeyPolicy("shared_static", True, "Ollama Cloud"),
     "OPENAI_API_KEY": EnvKeyPolicy("shared_static", True, "OpenAI"),
     "OPENROUTER_API_KEY": EnvKeyPolicy("shared_static", True, "OpenRouter"),
     "XAI_API_KEY": EnvKeyPolicy("shared_static", True, "xAI"),
